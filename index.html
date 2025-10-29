@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Video Feedback Annotator</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <h1>Video Feedback Annotator</h1>
+      <div class="controls">
+        <label class="file-btn">
+          <input id="videoFile" type="file" accept="video/*" />
+          <span>Load Video</span>
+        </label>
+        <label class="file-btn">
+          <input id="loadJson" type="file" accept="application/json" />
+          <span>Load Annotations</span>
+        </label>
+        <button id="saveJson">Save</button>
+        <button id="saveProject">Save Project</button>
+        <label class="file-btn">
+          <input id="loadProject" type="file" accept="application/json,.vfa" />
+          <span>Load Project</span>
+        </label>
+        <button id="exportPdf">Export PDF</button>
+        <button id="helpBtn" title="How it works">Help</button>
+        <button id="themeToggle" title="Toggle theme">Theme</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="player-panel">
+        <div class="video-container" id="dropZone">
+          <video id="video" crossorigin="anonymous"></video>
+          <canvas id="overlay" class="overlay" tabindex="0" aria-label="Annotation overlay"></canvas>
+          <div class="hud">
+            <div id="centerStatus" class="center-status" aria-hidden="true"></div>
+            <div id="miniControls" class="mini-controls" role="group" aria-label="Quick controls">
+              <button id="miniBack" title="Step back (←)">◀</button>
+              <button id="miniToggle" title="Play/Pause (Space)">▶</button>
+              <button id="miniFwd" title="Step forward (→)">▶</button>
+            </div>
+          </div>
+          <div class="placeholder" id="placeholder">
+            <div class="ph-inner">
+              <div class="ph-title">Load a video to get started</div>
+              <div class="ph-sub">Drag & drop a file here, or click “Load Video”.</div>
+            </div>
+          </div>
+        </div>
+        <div class="player-controls">
+          <div class="tool-group" role="toolbar" aria-label="Annotation tools">
+            <button id="toolSelect" class="tool active" title="Select/Play">Select</button>
+            <button id="toolPin" class="tool" title="Pin comment">Pin</button>
+            <button id="toolDraw" class="tool" title="Freehand drawing">Draw</button>
+            <label class="swatch" title="Stroke color">
+              <input id="colorInput" type="color" value="#5b9cff" />
+            </label>
+            <label title="Stroke width" class="width">
+              <input id="widthInput" type="range" min="1" max="12" step="1" value="3" />
+              <span id="widthVal">3px</span>
+            </label>
+          </div>
+          <label>Show window ± <input id="marginInput" type="number" min="0" step="0.1" value="1.5" /> s</label>
+        </div>
+
+        <div class="transport">
+          <div class="transport-row">
+            <div class="left-controls">
+              <button id="prevAnn" class="tbtn" title="Previous annotation (A)">⟸ Ann</button>
+            </div>
+            <div class="center-controls">
+              <button id="stepBack" class="tbtn" title="Step back (←)">◀</button>
+              <button id="playPause" class="tbtn primary" title="Play/Pause (Space)">▶</button>
+              <button id="stepFwd" class="tbtn" title="Step forward (→)">▶</button>
+            </div>
+            <div class="right-controls">
+              <button id="nextAnn" class="tbtn" title="Next annotation (D)">Ann ⟹</button>
+            </div>
+          </div>
+          <div class="markers-row">
+            <div class="marks">
+              <button id="setIn" class="tbtn" title="Set In (I)">Set In</button>
+              <button id="setOut" class="tbtn" title="Set Out (O)">Set Out</button>
+              <button id="clearRange" class="tbtn" title="Clear In/Out (X)">Clear</button>
+              <label class="snap-label"><input id="snapToggle" type="checkbox" checked /> Snap</label>
+            </div>
+            <div class="zoom">
+              <label>Zoom <input id="zoomInput" type="range" min="1" max="40" step="1" value="1" /></label>
+            </div>
+          </div>
+          <div class="an-row">
+            <label class="an-toggle"><input id="anEnable" type="checkbox" /> Analyze Audio (YouTube -14 LUFS)</label>
+            <div class="an-meters" id="anMeters" aria-live="polite">
+              <div><span class="an-label">Short-term</span> <span id="anShort">—</span> LUFS</div>
+              <div><span class="an-label">Integrated</span> <span id="anIntegrated">—</span> LUFS</div>
+              <div><span class="an-label">Peak</span> <span id="anPeak">—</span> dBFS</div>
+            </div>
+          </div>
+          <div class="timeline-row">
+            <div class="time-display"><span id="timecode">0:00.000</span> / <span id="duration">0:00.000</span></div>
+            <div id="timelineContainer" class="timeline"><canvas id="timeline" height="44"></canvas></div>
+          </div>
+        </div>
+      </section>
+      <div id="splitter" class="splitter" role="separator" aria-orientation="vertical" aria-label="Resize sidebar"></div>
+      <aside class="list-panel">
+        <div class="panel-top">
+          <div class="list-header">
+            <h2>Annotations</h2>
+            <button id="clearAll" class="danger">Clear All</button>
+          </div>
+          <div class="filters">
+            <label>Type
+              <select id="filterType">
+                <option value="all">All</option>
+                <option value="pin">Pins</option>
+                <option value="path">Drawings</option>
+              </select>
+            </label>
+            <label>Tag
+              <input id="filterTag" list="tagsDatalist" placeholder="Any" />
+              <datalist id="tagsDatalist"></datalist>
+            </label>
+            <label>Sort
+              <select id="sortOrder">
+                <option value="time-asc">Time ↑</option>
+                <option value="time-desc">Time ↓</option>
+                <option value="updated-desc">Updated ↓</option>
+              </select>
+            </label>
+          </div>
+          <div class="notes card">
+            <div class="row"><div class="meta">Project Notes</div></div>
+            <textarea id="projectNotes" rows="4" placeholder="Notes for the whole video..."></textarea>
+          </div>
+        </div>
+        <div class="annotation-list" id="annotationList"></div>
+      </aside>
+    </main>
+
+    <footer class="footer">
+      <span>Tip: Toggle "Add Comment" then click on the video to drop a pin and write feedback. Pins appear only near their timestamp.</span>
+    </footer>
+
+    <!-- Help / Tutorial -->
+    <dialog id="helpDialog">
+      <form method="dialog">
+        <h3>How to use</h3>
+        <ul>
+          <li>Load a video via Load Video or drag & drop.</li>
+          <li>Quick Pin: Shift+click on the video adds a pin at the playhead time.</li>
+          <li>Quick Draw: hold D and draw freehand; release D to stop.</li>
+          <li>Transport: Space play/pause, ←/→ step, A/D prev/next annotation.</li>
+          <li>Timeline: Click to scrub, click markers to jump; zoom and pan (Alt+drag).</li>
+          <li>Sidebar: Edit comments inline; set tag and color; filter and sort.</li>
+          <li>Project: Save/Load Project to keep notes + annotations + settings.</li>
+          <li>PDF: Export frames; honors In/Out range if set.</li>
+        </ul>
+        <label><input id="helpShowOnStart" type="checkbox" checked /> Show this on start</label>
+        <menu>
+          <button value="default">Close</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" integrity="sha512-+R6ZrO7sVnS3b8qq3z2m0tH9y8Yf86WbQyRzH/4kF8s7aGkQyqCqBzF3Qq+3RCyEoWj3C8+K6lYrK8Vb9M2fAw==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="app.js"></script>
+
+    <!-- Export dialog -->
+    <dialog id="exportDialog">
+      <form method="dialog" class="export-dialog">
+        <h3>Export PDF</h3>
+        <div class="export-options">
+          <label><input type="checkbox" id="expIncludeNotes" checked /> Include cover page with notes</label>
+          <label><input type="checkbox" id="expUseRange" /> Only within In/Out range</label>
+          <label><input type="checkbox" id="expSelectAll" checked /> Select all</label>
+        </div>
+        <div class="export-body">
+          <div class="export-left">
+            <div class="export-list" id="exportList"></div>
+          </div>
+          <div class="export-right">
+            <div class="export-actions">
+              <button id="expBuildPreview" type="button">Build Preview</button>
+              <button id="expSavePdf" class="primary" type="button">Save to PDF</button>
+            </div>
+            <div class="export-preview" id="exportPreview"><div class="muted">Preview pages will appear here.</div></div>
+            <div class="muted small" id="expStatus"></div>
+          </div>
+        </div>
+        <menu>
+          <button value="default">Close</button>
+        </menu>
+      </form>
+    </dialog>
+  </body>
+  </html>
