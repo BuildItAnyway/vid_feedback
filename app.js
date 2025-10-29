@@ -1394,7 +1394,7 @@
     const unassigned = state.annotations.filter(a => !a.viewerId || !a.displayName);
     if (unassigned.length === 0) return;
 
-    // Get all unique existing identities
+    // Get all unique existing identities from annotations
     const existingIdentities = new Map();
     state.annotations.forEach(a => {
       if (a.viewerId && a.displayName) {
@@ -1402,23 +1402,43 @@
       }
     });
 
+    // Get current user
+    const currentUser = ensureCurrentUser();
+
     // Populate reassignment dialog
     if (reassignSelect && reassignDialog) {
       reassignSelect.innerHTML = '';
 
-      // Add "New commenter" option
+      // Add current user as first option if they have a display name
+      if (currentUser.displayName) {
+        const meOption = document.createElement('option');
+        meOption.value = currentUser.viewerId;
+        meOption.textContent = `${currentUser.displayName} (Me)`;
+        meOption.selected = true; // Make current user the default
+        reassignSelect.appendChild(meOption);
+      }
+
+      // Add existing identities (skip if already added as current user)
+      existingIdentities.forEach((identity, viewerId) => {
+        if (viewerId !== currentUser.viewerId) {
+          const option = document.createElement('option');
+          option.value = viewerId;
+          option.textContent = identity.displayName;
+          reassignSelect.appendChild(option);
+        }
+      });
+
+      // Add "New commenter" option at the end
       const newOption = document.createElement('option');
       newOption.value = '__new__';
       newOption.textContent = 'New commenter...';
       reassignSelect.appendChild(newOption);
 
-      // Add existing identities
-      existingIdentities.forEach((identity, viewerId) => {
-        const option = document.createElement('option');
-        option.value = viewerId;
-        option.textContent = identity.displayName;
-        reassignSelect.appendChild(option);
-      });
+      // Update dialog message with count
+      const reassignMessage = reassignDialog.querySelector('.reassign-message');
+      if (reassignMessage) {
+        reassignMessage.textContent = `This project has ${unassigned.length} comment${unassigned.length === 1 ? '' : 's'} without an assigned commenter. Please assign ${unassigned.length === 1 ? 'it' : 'them'} to:`;
+      }
 
       reassignDialog.showModal();
     }
