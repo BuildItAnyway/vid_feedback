@@ -38,7 +38,7 @@
   const timecodeEl = document.getElementById('timecode');
   const durationEl = document.getElementById('duration');
   const timelineCanvas = document.getElementById('timeline');
-  const timelineContainer = document.getElementById('timelineContainer');
+  const timelineContainer = timelineCanvas?.parentElement;
   const tl = timelineCanvas?.getContext('2d');
   const zoomInput = document.getElementById('zoomInput');
   const setInBtn = document.getElementById('setIn');
@@ -430,10 +430,32 @@
         tl.beginPath(); tl.moveTo(toX(b),0); tl.lineTo(toX(b),height); tl.stroke();
       }
     }
-    // playhead
+    // playhead - modern design with circular handle
     const px = toX(t);
-    tl.strokeStyle = midColor; tl.lineWidth = 2;
-    tl.beginPath(); tl.moveTo(px, 0); tl.lineTo(px, height); tl.stroke();
+    if (px >= 0 && px <= width) {
+      // Vertical line
+      tl.strokeStyle = '#06c167'; // primary green for visibility
+      tl.lineWidth = 3;
+      tl.beginPath();
+      tl.moveTo(px, 10);
+      tl.lineTo(px, height);
+      tl.stroke();
+
+      // Circular handle at top
+      tl.fillStyle = '#06c167';
+      tl.shadowColor = 'rgba(6, 193, 103, 0.4)';
+      tl.shadowBlur = 8;
+      tl.beginPath();
+      tl.arc(px, 8, 6, 0, Math.PI * 2);
+      tl.fill();
+      tl.shadowBlur = 0; // reset shadow
+
+      // White center dot for contrast
+      tl.fillStyle = '#ffffff';
+      tl.beginPath();
+      tl.arc(px, 8, 2.5, 0, Math.PI * 2);
+      tl.fill();
+    }
   }
 
   function setMode(mode){
@@ -1103,7 +1125,7 @@
         } else {
           hidePlaceholder();
         }
-        requestAnimationFrame(()=>{ resizeOverlay(); drawOverlay(); });
+        requestAnimationFrame(()=>{ resizeOverlay(); });
         setMode('select');
       }catch(err){ alert('Failed to load project: ' + err.message); }
     });
@@ -1309,7 +1331,7 @@
       window.removeEventListener('mouseup', onUp);
     };
     splitter.addEventListener('mousedown', (e)=>{
-      dragging = true; startX = e.clientX; startW = parseInt(getComputedStyle(root).getPropertyValue('--sidebar-width')) || 360;
+      dragging = true; startX = e.clientX; startW = parseInt(getComputedStyle(root).getPropertyValue('--sidebar-width')) || 380;
       window.addEventListener('mousemove', onMove);
       window.addEventListener('mouseup', onUp);
     });
