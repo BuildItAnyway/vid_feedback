@@ -1309,7 +1309,7 @@
       window.removeEventListener('mouseup', onUp);
     };
     splitter.addEventListener('mousedown', (e)=>{
-      dragging = true; startX = e.clientX; startW = parseInt(getComputedStyle(root).getPropertyValue('--sidebar-width')) || 360;
+      dragging = true; startX = e.clientX; startW = parseInt(getComputedStyle(root).getPropertyValue('--sidebar-width')) || 380;
       window.addEventListener('mousemove', onMove);
       window.addEventListener('mouseup', onUp);
     });
