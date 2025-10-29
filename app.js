@@ -758,16 +758,18 @@
   }
 
   // Event wiring
-  fileInput.addEventListener('change', (e)=>{
-    const f = e.target.files?.[0];
-    if (!f) return;
-    const url = URL.createObjectURL(f);
-    video.src = url;
-    video.load();
-    // do not autoplay on load
-    state.videoMeta = { name:f.name, type:f.type, size:f.size, lastModified:f.lastModified };
-    hidePlaceholder();
-  });
+  if (fileInput) {
+    fileInput.addEventListener('change', (e)=>{
+      const f = e.target.files?.[0];
+      if (!f) return;
+      const url = URL.createObjectURL(f);
+      video.src = url;
+      video.load();
+      // do not autoplay on load
+      state.videoMeta = { name:f.name, type:f.type, size:f.size, lastModified:f.lastModified };
+      hidePlaceholder();
+    });
+  }
 
   video.addEventListener('loadedmetadata', ()=>{
     resizeOverlay();
@@ -1026,21 +1028,24 @@
     if (anEnable.checked) startAnalysis(); else stopAnalysis();
   });
 
-  saveJsonBtn.addEventListener('click', ()=>{
-    const data = {
-      version: 3,
-      margin: parseFloat(marginInput.value)||0,
-      annotations: state.annotations,
-      notes: state.notes || '',
-    };
-    const blob = new Blob([JSON.stringify(data,null,2)], { type: 'application/json' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'annotations.json';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-  });
+  // Legacy saveJson functionality - optional button
+  if (saveJsonBtn) {
+    saveJsonBtn.addEventListener('click', ()=>{
+      const data = {
+        version: 3,
+        margin: parseFloat(marginInput.value)||0,
+        annotations: state.annotations,
+        notes: state.notes || '',
+      };
+      const blob = new Blob([JSON.stringify(data,null,2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'annotations.json';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    });
+  }
 
   // Filters UI
   function syncFilters(){
@@ -1068,22 +1073,25 @@
   applyTheme(savedTheme);
   themeToggle?.addEventListener('click', ()=>{ const cur = document.documentElement.getAttribute('data-theme')||'dark'; applyTheme(cur==='dark' ? 'light' : 'dark'); });
 
-  loadJsonInput.addEventListener('change', async (e)=>{
-    const f = e.target.files?.[0];
-    if (!f) return;
-    try{
-      const text = await f.text();
-      const data = JSON.parse(text);
-      if (Array.isArray(data)){
-        state.annotations = data;
-      } else if (data && Array.isArray(data.annotations)){
-        state.annotations = data.annotations;
-        if (typeof data.margin === 'number') marginInput.value = String(data.margin);
-        if (typeof data.notes === 'string'){ state.notes = data.notes; if (projectNotesEl) projectNotesEl.value = state.notes; }
-      }
-      renderList(); drawOverlay(); drawTimeline();
-    }catch(err){ alert('Failed to load annotations: '+ err.message); }
-  });
+  // Legacy loadJson functionality - optional input
+  if (loadJsonInput) {
+    loadJsonInput.addEventListener('change', async (e)=>{
+      const f = e.target.files?.[0];
+      if (!f) return;
+      try{
+        const text = await f.text();
+        const data = JSON.parse(text);
+        if (Array.isArray(data)){
+          state.annotations = data;
+        } else if (data && Array.isArray(data.annotations)){
+          state.annotations = data.annotations;
+          if (typeof data.margin === 'number') marginInput.value = String(data.margin);
+          if (typeof data.notes === 'string'){ state.notes = data.notes; if (projectNotesEl) projectNotesEl.value = state.notes; }
+        }
+        renderList(); drawOverlay(); drawTimeline();
+      }catch(err){ alert('Failed to load annotations: '+ err.message); }
+    });
+  }
 
   // Save/Load full project
   if (saveProjectBtn){
@@ -1131,13 +1139,15 @@
     });
   }
 
-  clearAllBtn.addEventListener('click', ()=>{
-    if (state.annotations.length===0) return;
-    if (confirm('Delete all annotations?')){
-      state.annotations = [];
-      renderList(); drawOverlay();
-    }
-  });
+  if (clearAllBtn) {
+    clearAllBtn.addEventListener('click', ()=>{
+      if (state.annotations.length===0) return;
+      if (confirm('Delete all annotations?')){
+        state.annotations = [];
+        renderList(); drawOverlay();
+      }
+    });
+  }
 
   // Export dialog flow
   function buildExportList(){
@@ -1164,12 +1174,14 @@
     return items;
   }
 
-  exportPdfBtn.addEventListener('click', ()=>{
-    exportDialog.showModal();
-    expStatusEl.textContent = '';
-    expSelectAllChk.checked = true; expUseRangeChk.checked = false; expIncludeNotesChk.checked = true;
-    buildExportList();
-  });
+  if (exportPdfBtn) {
+    exportPdfBtn.addEventListener('click', ()=>{
+      exportDialog.showModal();
+      expStatusEl.textContent = '';
+      expSelectAllChk.checked = true; expUseRangeChk.checked = false; expIncludeNotesChk.checked = true;
+      buildExportList();
+    });
+  }
 
   expSelectAllChk?.addEventListener('change', ()=>{
     exportListEl.querySelectorAll('input[type="checkbox"]').forEach(cb=> cb.checked = expSelectAllChk.checked);
@@ -1297,7 +1309,7 @@
     else if (e.key==='s' || e.key==='S'){ setMode('select'); }
     else if (e.key==='m' || e.key==='M'){ setMode('pin'); }
     else if (e.key==='b' || e.key==='B'){ setMode('draw'); }
-    else if ((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='s'){ e.preventDefault(); saveJsonBtn.click(); }
+    else if ((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='s'){ e.preventDefault(); (saveJsonBtn || saveProjectBtn)?.click(); }
     else if (e.key==='i' || e.key==='I'){ state.markIn = video.currentTime||0; drawTimeline(); }
     else if (e.key==='o' || e.key==='O'){ state.markOut = video.currentTime||0; drawTimeline(); }
     else if (e.key==='x' || e.key==='X'){ state.markIn = null; state.markOut = null; drawTimeline(); }
