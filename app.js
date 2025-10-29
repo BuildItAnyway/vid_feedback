@@ -1103,7 +1103,7 @@
         } else {
           hidePlaceholder();
         }
-        requestAnimationFrame(()=>{ resizeOverlay(); drawOverlay(); });
+        requestAnimationFrame(()=>{ resizeOverlay(); });
         setMode('select');
       }catch(err){ alert('Failed to load project: ' + err.message); }
     });
