@@ -23,6 +23,8 @@
   const helpDialog = document.getElementById('helpDialog');
   const helpShowOnStart = document.getElementById('helpShowOnStart');
   const themeToggle = document.getElementById('themeToggle');
+  const setUserNameBtn = document.getElementById('setUserNameBtn');
+  const userNameDisplay = document.getElementById('userNameDisplay');
   // Filters
   const filterTypeSel = document.getElementById('filterType');
   const filterTagInput = document.getElementById('filterTag');
@@ -130,8 +132,8 @@
     }
   }
 
-  function promptForDisplayName(callback) {
-    const name = prompt('Enter your display name:', state.currentUser?.displayName || '');
+  function promptForDisplayName() {
+    const name = prompt('Enter your display name (optional):', state.currentUser?.displayName || '');
     if (name && name.trim()) {
       if (!state.currentUser) {
         initializeCurrentUser();
@@ -143,15 +145,30 @@
       };
       saveCurrentUser();
       markUnsavedChanges();
-      if (callback) callback();
+      updateUserNameDisplay();
+      renderList();
     }
   }
 
-  function ensureUserHasName(callback) {
-    if (!state.currentUser || !state.currentUser.displayName) {
-      promptForDisplayName(callback);
-    } else {
-      if (callback) callback();
+  function getCurrentUserInfo() {
+    // Get current user info, prompting for name only if needed and not already set
+    if (!state.currentUser) {
+      initializeCurrentUser();
+    }
+    return {
+      viewerId: state.currentUser.viewerId,
+      displayName: state.currentUser.displayName || null,
+      color: state.currentUser.color
+    };
+  }
+
+  function updateUserNameDisplay() {
+    if (userNameDisplay && state.currentUser) {
+      if (state.currentUser.displayName) {
+        userNameDisplay.textContent = state.currentUser.displayName;
+      } else {
+        userNameDisplay.textContent = 'Set Name';
+      }
     }
   }
 
@@ -1096,119 +1113,116 @@
   // Pin placement (inline, no modal)
   overlay.addEventListener('click', (evt)=>{
     if (state.mode !== 'pin') return;
-    ensureUserHasName(() => {
-      const { x, y } = normCoords(evt);
-      const a = {
-        id: guid(),
-        type:'pin',
-        x,
-        y,
-        time: video.currentTime,
-        text:'',
-        createdAt: Date.now(),
-        color: state.currentUser?.color || (colorInput ? colorInput.value : '#5b9cff'),
-        viewerId: state.currentUser?.viewerId,
-        displayName: state.currentUser?.displayName
-      };
-      state.annotations.push(a);
-      markUnsavedChanges();
-      if (!video.paused){ state.pendingEdit = { id: a.id, wasPlaying: true }; video.pause(); }
-      setMode('select');
-      renderList();
-      const lastCard = annotationListEl.lastElementChild; // focus newest
-      if (lastCard){ const ta = lastCard.querySelector('textarea'); ta?.focus(); scrollCardIntoViewById(a.id); }
-      drawOverlay();
-    });
+    const { x, y } = normCoords(evt);
+    const userInfo = getCurrentUserInfo();
+    const a = {
+      id: guid(),
+      type:'pin',
+      x,
+      y,
+      time: video.currentTime,
+      text:'',
+      createdAt: Date.now(),
+      color: userInfo.color || (colorInput ? colorInput.value : '#5b9cff'),
+      viewerId: userInfo.viewerId,
+      displayName: userInfo.displayName
+    };
+    state.annotations.push(a);
+    markUnsavedChanges();
+    if (!video.paused){ state.pendingEdit = { id: a.id, wasPlaying: true }; video.pause(); }
+    setMode('select');
+    renderList();
+    const lastCard = annotationListEl.lastElementChild; // focus newest
+    if (lastCard){ const ta = lastCard.querySelector('textarea'); ta?.focus(); scrollCardIntoViewById(a.id); }
+    drawOverlay();
   });
 
   // Quick Pin: Shift+click on the video while in Select mode
   video.addEventListener('click', (evt)=>{
     if (state.mode !== 'select') return;
     if (!evt.shiftKey) return;
-    ensureUserHasName(() => {
-      const r = video.getBoundingClientRect();
-      const x = (evt.clientX - r.left) / r.width;
-      const y = (evt.clientY - r.top) / r.height;
-      const a = {
-        id: guid(),
-        type:'pin',
-        x:Math.max(0,Math.min(1,x)),
-        y:Math.max(0,Math.min(1,y)),
-        time: video.currentTime,
-        text:'',
-        createdAt: Date.now(),
-        color: state.currentUser?.color || (colorInput ? colorInput.value : '#5b9cff'),
-        viewerId: state.currentUser?.viewerId,
-        displayName: state.currentUser?.displayName
-      };
-      state.annotations.push(a);
-      markUnsavedChanges();
-      const wasPlayingNow = !video.paused; if (wasPlayingNow) video.pause(); state.pendingEdit = { id: a.id, wasPlaying: wasPlayingNow };
-      renderList(); drawOverlay();
-      const lastCard = annotationListEl.lastElementChild; if (lastCard){ lastCard.querySelector('textarea')?.focus(); scrollCardIntoViewById(a.id); }
-    });
+    const r = video.getBoundingClientRect();
+    const x = (evt.clientX - r.left) / r.width;
+    const y = (evt.clientY - r.top) / r.height;
+    const userInfo = getCurrentUserInfo();
+    const a = {
+      id: guid(),
+      type:'pin',
+      x:Math.max(0,Math.min(1,x)),
+      y:Math.max(0,Math.min(1,y)),
+      time: video.currentTime,
+      text:'',
+      createdAt: Date.now(),
+      color: userInfo.color || (colorInput ? colorInput.value : '#5b9cff'),
+      viewerId: userInfo.viewerId,
+      displayName: userInfo.displayName
+    };
+    state.annotations.push(a);
+    markUnsavedChanges();
+    const wasPlayingNow = !video.paused; if (wasPlayingNow) video.pause(); state.pendingEdit = { id: a.id, wasPlaying: wasPlayingNow };
+    renderList(); drawOverlay();
+    const lastCard = annotationListEl.lastElementChild; if (lastCard){ lastCard.querySelector('textarea')?.focus(); scrollCardIntoViewById(a.id); }
   });
 
   // Drawing
   let wasPlaying = false;
   overlay.addEventListener('mousedown', (evt)=>{
     if (state.mode !== 'draw') return;
-    ensureUserHasName(() => {
-      evt.preventDefault();
-      const pt = normCoords(evt);
-      wasPlaying = !video.paused;
-      video.pause();
-      state.drawing = {
-        id: guid(),
-        type: 'path',
-        time: video.currentTime,
-        color: state.currentUser?.color || (colorInput ? colorInput.value : '#5b9cff'),
-        width: widthInput ? (parseInt(widthInput.value,10)||3) : 3,
-        points: [pt],
-        text: '',
-        createdAt: Date.now(),
-        viewerId: state.currentUser?.viewerId,
-        displayName: state.currentUser?.displayName
-      };
+    evt.preventDefault();
+    const pt = normCoords(evt);
+    wasPlaying = !video.paused;
+    video.pause();
+    const userInfo = getCurrentUserInfo();
+    state.drawing = {
+      id: guid(),
+      type: 'path',
+      time: video.currentTime,
+      color: userInfo.color || (colorInput ? colorInput.value : '#5b9cff'),
+      width: widthInput ? (parseInt(widthInput.value,10)||3) : 3,
+      points: [pt],
+      text: '',
+      createdAt: Date.now(),
+      viewerId: userInfo.viewerId,
+      displayName: userInfo.displayName
+    };
+    drawOverlay();
+    const onMove = (e)=>{
+      const p = normCoords(e);
+      state.drawing.points.push(p);
       drawOverlay();
-      const onMove = (e)=>{
-        const p = normCoords(e);
-        state.drawing.points.push(p);
-        drawOverlay();
-      };
-      const onUp = ()=>{
-        overlay.removeEventListener('mousemove', onMove);
-        overlay.removeEventListener('mouseup', onUp);
-        // Ensure there is a pin at this time; link drawing to it
-        const eps = 0.05; // 50ms
-        let pin = state.annotations.find(x=>x.type==='pin' && Math.abs(x.time - state.drawing.time) <= eps);
-        if (!pin){
-          const first = state.drawing.points?.[0] || {x:0.5,y:0.5};
-          pin = {
-            id: guid(),
-            type:'pin',
-            x:first.x,
-            y:first.y,
-            time: state.drawing.time,
-            text:'',
-            color: state.drawing.color || '#5b9cff',
-            createdAt: Date.now(),
-            viewerId: state.currentUser?.viewerId,
-            displayName: state.currentUser?.displayName
-          };
-          state.annotations.push(pin);
-        }
-        state.drawing.parentId = pin.id;
-        state.annotations.push(state.drawing);
-        markUnsavedChanges();
-        state.drawing = null;
-        renderList();
-        drawOverlay();
-        if (wasPlaying) video.play().catch(()=>{});
-      };
-      overlay.addEventListener('mousemove', onMove);
-      overlay.addEventListener('mouseup', onUp, { once:true });
-    });
+    };
+    const onUp = ()=>{
+      overlay.removeEventListener('mousemove', onMove);
+      overlay.removeEventListener('mouseup', onUp);
+      // Ensure there is a pin at this time; link drawing to it
+      const eps = 0.05; // 50ms
+      let pin = state.annotations.find(x=>x.type==='pin' && Math.abs(x.time - state.drawing.time) <= eps);
+      if (!pin){
+        const first = state.drawing.points?.[0] || {x:0.5,y:0.5};
+        pin = {
+          id: guid(),
+          type:'pin',
+          x:first.x,
+          y:first.y,
+          time: state.drawing.time,
+          text:'',
+          color: state.drawing.color || '#5b9cff',
+          createdAt: Date.now(),
+          viewerId: userInfo.viewerId,
+          displayName: userInfo.displayName
+        };
+        state.annotations.push(pin);
+      }
+      state.drawing.parentId = pin.id;
+      state.annotations.push(state.drawing);
+      markUnsavedChanges();
+      state.drawing = null;
+      renderList();
+      drawOverlay();
+      if (wasPlaying) video.play().catch(()=>{});
+    };
+    overlay.addEventListener('mousemove', onMove);
+    overlay.addEventListener('mouseup', onUp, { once:true });
   });
 
   // Temporary Draw: hold D to draw then release to return to Select
@@ -1401,6 +1415,9 @@
   const savedTheme = localStorage.getItem('vfa_theme') || 'dark';
   applyTheme(savedTheme);
   themeToggle?.addEventListener('click', ()=>{ const cur = document.documentElement.getAttribute('data-theme')||'dark'; applyTheme(cur==='dark' ? 'light' : 'dark'); });
+
+  // User name button
+  setUserNameBtn?.addEventListener('click', ()=> promptForDisplayName());
 
   loadJsonInput.addEventListener('change', async (e)=>{
     const f = e.target.files?.[0];
@@ -1762,6 +1779,7 @@
 
   // Initial
   initializeCurrentUser();
+  updateUserNameDisplay();
   setMode('select');
   if (widthInput && widthVal) widthVal.textContent = (widthInput.value||'3') + 'px';
   renderList();
