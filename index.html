@@ -271,52 +271,133 @@
     </div>
   </dialog>
 
-  <!-- Export Dialog -->
-  <dialog id="exportDialog" class="modal-dialog modal-large">
+  <!-- Export Dialog - Full Screen Overlay -->
+  <dialog id="exportDialog" class="modal-dialog export-overlay">
+    <div class="export-container">
+      <div class="export-header">
+        <div class="export-title">
+          <h2>Export Video Feedback</h2>
+          <p class="export-subtitle">Review and export your annotations with comprehensive metadata</p>
+        </div>
+        <button class="modal-close" onclick="this.closest('dialog').close()">×</button>
+      </div>
+
+      <div class="export-main">
+        <!-- Left: Configuration -->
+        <div class="export-config">
+          <div class="config-section">
+            <h3>Export Settings</h3>
+
+            <div class="form-group">
+              <label>Filename</label>
+              <input type="text" id="expFilename" class="form-input"
+                     placeholder="video-feedback-export.pdf" />
+            </div>
+
+            <div class="form-group">
+              <label>Format</label>
+              <select id="expFormat" class="form-input">
+                <option value="pdf">PDF Document</option>
+                <option value="json">JSON Data</option>
+              </select>
+            </div>
+
+            <div class="form-group checkbox-group">
+              <label class="checkbox-inline">
+                <input type="checkbox" id="expIncludeNotes" checked />
+                <span>Include project notes</span>
+              </label>
+              <label class="checkbox-inline">
+                <input type="checkbox" id="expUseRange" />
+                <span>Only export In/Out range</span>
+              </label>
+              <label class="checkbox-inline">
+                <input type="checkbox" id="expSelectAll" checked />
+                <span>Select all annotations</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="config-section">
+            <h3>Metadata Summary</h3>
+            <div class="metadata-grid" id="expMetadata">
+              <!-- Populated dynamically -->
+            </div>
+          </div>
+
+          <div class="config-section">
+            <h3>Annotations</h3>
+            <div class="export-list" id="exportList"></div>
+          </div>
+        </div>
+
+        <!-- Right: Preview -->
+        <div class="export-preview-area">
+          <div class="preview-header">
+            <span>Preview</span>
+            <button class="compact-btn" id="expBuildPreview">Generate Preview</button>
+          </div>
+          <div class="export-preview" id="exportPreview">
+            <div class="preview-empty">Click "Generate Preview" to see export preview</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="export-footer">
+        <div class="export-status" id="expStatus"></div>
+        <div class="export-actions">
+          <button class="btn-secondary" onclick="this.closest('dialog').close()">Cancel</button>
+          <button class="btn-primary" id="expSavePdf">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="7 10 12 15 17 10"></polyline>
+              <line x1="12" y1="15" x2="12" y2="3"></line>
+            </svg>
+            Export
+          </button>
+        </div>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Identity Dialog -->
+  <dialog id="identityDialog" class="modal-dialog">
     <div class="modal-header">
-      <h2>Export to PDF</h2>
+      <h2>Welcome! Enter Your Display Name</h2>
+    </div>
+    <div class="modal-content">
+      <p style="margin-bottom: 16px; color: var(--text-secondary);">
+        Your display name will be associated with all comments you create.
+        You can change it later if needed.
+      </p>
+      <input type="text" id="identityName" placeholder="e.g., John Doe"
+             style="width: 100%; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px;
+                    background: var(--bg-secondary); color: var(--text-primary); font-size: 14px;" />
+    </div>
+    <div class="modal-footer">
+      <button class="btn-primary" id="identitySave">Save</button>
+    </div>
+  </dialog>
+
+  <!-- Reassignment Dialog -->
+  <dialog id="reassignDialog" class="modal-dialog">
+    <div class="modal-header">
+      <h2>Assign Unassigned Comments</h2>
       <button class="modal-close" onclick="this.closest('dialog').close()">×</button>
     </div>
     <div class="modal-content">
-      <div class="export-options">
-        <label class="checkbox-inline">
-          <input type="checkbox" id="expIncludeNotes" checked />
-          <span>Include project notes</span>
-        </label>
-        <label class="checkbox-inline">
-          <input type="checkbox" id="expUseRange" />
-          <span>Only export In/Out range</span>
-        </label>
-        <label class="checkbox-inline">
-          <input type="checkbox" id="expSelectAll" checked />
-          <span>Select all</span>
-        </label>
-      </div>
-      
-      <div class="export-split">
-        <div class="export-list-panel">
-          <div class="panel-header">Select Annotations</div>
-          <div class="export-list" id="exportList"></div>
-        </div>
-        <div class="export-preview-panel">
-          <div class="panel-header">
-            <span>Preview</span>
-            <button class="compact-btn" id="expBuildPreview">Build</button>
-          </div>
-          <div class="export-preview" id="exportPreview">
-            <div class="preview-empty">Click Build to preview</div>
-          </div>
-        </div>
-      </div>
-      
-      <div class="export-status" id="expStatus"></div>
+      <p style="margin-bottom: 16px; color: var(--text-secondary);">
+        Some comments don't have an assigned commenter. Please assign them to:
+      </p>
+      <select id="reassignSelect"
+              style="width: 100%; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px;
+                     background: var(--bg-secondary); color: var(--text-primary); font-size: 14px;">
+        <option value="__new__">New commenter...</option>
+      </select>
     </div>
     <div class="modal-footer">
       <button class="btn-secondary" onclick="this.closest('dialog').close()">Cancel</button>
-      <button class="btn-primary" id="expSavePdf">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-        Save PDF
-      </button>
+      <button class="btn-primary" id="reassignBtn">Assign</button>
     </div>
   </dialog>
 

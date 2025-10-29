@@ -1,4 +1,7 @@
 (() => {
+  // App version - auto-increment on releases
+  const APP_VERSION = '2.0.0';
+
   const video = document.getElementById('video');
   const overlay = document.getElementById('overlay');
   const ctx = overlay.getContext('2d');
@@ -61,6 +64,13 @@
   const expIncludeNotesChk = document.getElementById('expIncludeNotes');
   const expUseRangeChk = document.getElementById('expUseRange');
   const expStatusEl = document.getElementById('expStatus');
+  // Identity dialogs
+  const identityDialog = document.getElementById('identityDialog');
+  const identityNameInput = document.getElementById('identityName');
+  const identitySaveBtn = document.getElementById('identitySave');
+  const reassignDialog = document.getElementById('reassignDialog');
+  const reassignSelect = document.getElementById('reassignSelect');
+  const reassignBtn = document.getElementById('reassignBtn');
 
   let state = {
     annotations: [],
@@ -81,10 +91,79 @@
     seek: { timer:null, holdTimer:null, dir:0, start:0 },
     selectedIds: new Set(),
     waveformData: { left: null, right: null }, // Audio waveform data for visualization
+    // Identity system
+    currentUser: null, // {viewerId, displayName, color}
+    identityMap: {}, // viewerId -> {displayName, color}
+    // Dirty state tracking
+    isDirty: false,
+    lastExportTime: null,
+    lastSaveTime: null,
   };
 
   const hidePlaceholder = ()=>{ const ph=document.getElementById('placeholder'); if (ph) ph.style.display='none'; };
   const showPlaceholder = ()=>{ const ph=document.getElementById('placeholder'); if (ph) ph.style.display='flex'; };
+
+  // Identity management
+  function generateUUID() {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+      const r = Math.random() * 16 | 0;
+      const v = c === 'x' ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
+    });
+  }
+
+  function stringToColor(str) {
+    // Deterministic color generation from string
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      hash = str.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    const hue = Math.abs(hash % 360);
+    const saturation = 65 + (Math.abs(hash) % 20); // 65-85%
+    const lightness = 50 + (Math.abs(hash >> 8) % 15); // 50-65%
+    return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+  }
+
+  function ensureCurrentUser() {
+    if (!state.currentUser) {
+      const stored = localStorage.getItem('vfa_user_identity');
+      if (stored) {
+        try {
+          state.currentUser = JSON.parse(stored);
+        } catch (e) {
+          state.currentUser = null;
+        }
+      }
+      if (!state.currentUser) {
+        const viewerId = generateUUID();
+        state.currentUser = {
+          viewerId,
+          displayName: '',
+          color: stringToColor(viewerId)
+        };
+      }
+    }
+    return state.currentUser;
+  }
+
+  function saveCurrentUser() {
+    if (state.currentUser) {
+      localStorage.setItem('vfa_user_identity', JSON.stringify(state.currentUser));
+      state.identityMap[state.currentUser.viewerId] = {
+        displayName: state.currentUser.displayName,
+        color: state.currentUser.color
+      };
+    }
+  }
+
+  function markDirty() {
+    state.isDirty = true;
+  }
+
+  function markClean() {
+    state.isDirty = false;
+    state.lastSaveTime = Date.now();
+  }
 
   // Waveform canvas references
   const waveformLeftCanvas = document.getElementById('waveformLeft');
@@ -665,11 +744,13 @@
     return { x: Math.max(0,Math.min(1,x)), y: Math.max(0,Math.min(1,y)) };
   }
 
-  async function exportPdf(){
+  async function exportPdf(items = null, opts = {}){
     if (!video.src){ alert('Load a video first'); return; }
     const { jsPDF } = window.jspdf || {};
     if (!jsPDF){ alert('jsPDF failed to load'); return; }
-    const items = [...state.annotations].sort((a,b)=>a.time-b.time);
+    if (!items) {
+      items = [...state.annotations].sort((a,b)=>a.time-b.time);
+    }
     if (items.length===0){ alert('No annotations to export'); return; }
 
     const wasPaused = video.paused;
@@ -762,20 +843,72 @@
       try { video.currentTime = Math.min(Math.max(time, 0), (video.duration||time)); }
       catch (e){ cleanup(); reject(e); }
     });
-    // Optional cover page with project notes
+    // Optional cover page with comprehensive metadata
     if ((opts?.includeNotes ?? true) && state.notes && String(state.notes).trim()){
-      pdf.setFontSize(18);
-      pdf.text('Video Annotations', 20, 30);
-      pdf.setFontSize(12);
+      pdf.setFontSize(20);
+      pdf.text('Video Feedback Export', 20, 30);
+
+      // Metadata header
+      pdf.setFontSize(10);
+      pdf.setTextColor(100);
       const meta = state.videoMeta || {};
-      const parts = [];
-      if (meta.name) parts.push('File: ' + meta.name);
-      if (video.duration) parts.push('Duration: ' + fmtTime(video.duration));
-      if (parts.length) pdf.text(parts.join('  |  '), 20, 50);
-      pdf.setFontSize(14); pdf.text('Project Notes', 20, 80);
-      pdf.setFontSize(12);
+      let yPos = 50;
+
+      // Video information
+      pdf.setFontSize(14);
+      pdf.setTextColor(0);
+      pdf.text('Video Information', 20, yPos);
+      yPos += 18;
+      pdf.setFontSize(11);
+      pdf.setTextColor(60);
+
+      if (meta.name) {
+        pdf.text('Filename: ' + meta.name, 30, yPos);
+        yPos += 14;
+      }
+      if (meta.size) {
+        pdf.text('File Size: ' + (meta.size / 1024 / 1024).toFixed(2) + ' MB', 30, yPos);
+        yPos += 14;
+      }
+      if (video.duration) {
+        pdf.text('Duration: ' + fmtTime(video.duration), 30, yPos);
+        yPos += 14;
+      }
+      if (video.videoWidth && video.videoHeight) {
+        pdf.text(`Resolution: ${video.videoWidth}x${video.videoHeight}`, 30, yPos);
+        yPos += 14;
+      }
+
+      // Export metadata
+      yPos += 8;
+      pdf.setFontSize(14);
+      pdf.setTextColor(0);
+      pdf.text('Export Information', 20, yPos);
+      yPos += 18;
+      pdf.setFontSize(11);
+      pdf.setTextColor(60);
+
+      const currentUser = ensureCurrentUser();
+      const exportDate = new Date();
+      pdf.text('Exported by: ' + (currentUser.displayName || 'Anonymous') + ' (' + currentUser.viewerId.substring(0, 8) + ')', 30, yPos);
+      yPos += 14;
+      pdf.text('Export Date: ' + exportDate.toLocaleString(), 30, yPos);
+      yPos += 14;
+      pdf.text('App Version: ' + APP_VERSION, 30, yPos);
+      yPos += 14;
+      pdf.text('Total Annotations: ' + items.length, 30, yPos);
+      yPos += 20;
+
+      // Project Notes
+      pdf.setFontSize(14);
+      pdf.setTextColor(0);
+      pdf.text('Project Notes', 20, yPos);
+      yPos += 18;
+      pdf.setFontSize(11);
+      pdf.setTextColor(60);
       const wrapped = pdf.splitTextToSize(String(state.notes), pageW - 40);
-      pdf.text(wrapped, 20, 100);
+      pdf.text(wrapped, 30, yPos);
+
       pdf.addPage('a4','landscape');
     }
 
@@ -886,8 +1019,22 @@
   overlay.addEventListener('click', (evt)=>{
     if (state.mode !== 'pin') return;
     const { x, y } = normCoords(evt);
-    const a = { id: guid(), type:'pin', x, y, time: video.currentTime, text:'', createdAt: Date.now(), color: colorInput ? colorInput.value : '#5b9cff' };
+    const user = ensureCurrentUser();
+    const a = {
+      id: guid(),
+      type:'pin',
+      x,
+      y,
+      time: video.currentTime,
+      text:'',
+      createdAt: Date.now(),
+      color: colorInput ? colorInput.value : '#5b9cff',
+      viewerId: user.viewerId,
+      displayName: user.displayName,
+      commenterColor: user.color
+    };
     state.annotations.push(a);
+    markDirty();
     if (!video.paused){ state.pendingEdit = { id: a.id, wasPlaying: true }; video.pause(); }
     setMode('select');
     renderList();
@@ -903,8 +1050,22 @@
     const r = video.getBoundingClientRect();
     const x = (evt.clientX - r.left) / r.width;
     const y = (evt.clientY - r.top) / r.height;
-    const a = { id: guid(), type:'pin', x:Math.max(0,Math.min(1,x)), y:Math.max(0,Math.min(1,y)), time: video.currentTime, text:'', createdAt: Date.now(), color: colorInput ? colorInput.value : '#5b9cff' };
+    const user = ensureCurrentUser();
+    const a = {
+      id: guid(),
+      type:'pin',
+      x:Math.max(0,Math.min(1,x)),
+      y:Math.max(0,Math.min(1,y)),
+      time: video.currentTime,
+      text:'',
+      createdAt: Date.now(),
+      color: colorInput ? colorInput.value : '#5b9cff',
+      viewerId: user.viewerId,
+      displayName: user.displayName,
+      commenterColor: user.color
+    };
     state.annotations.push(a);
+    markDirty();
     const wasPlayingNow = !video.paused; if (wasPlayingNow) video.pause(); state.pendingEdit = { id: a.id, wasPlaying: wasPlayingNow };
     renderList(); drawOverlay();
     const lastCard = annotationListEl.lastElementChild; if (lastCard){ lastCard.querySelector('textarea')?.focus(); scrollCardIntoViewById(a.id); }
@@ -918,6 +1079,7 @@
     const pt = normCoords(evt);
     wasPlaying = !video.paused;
     video.pause();
+    const user = ensureCurrentUser();
     state.drawing = {
       id: guid(),
       type: 'path',
@@ -927,6 +1089,9 @@
       points: [pt],
       text: '',
       createdAt: Date.now(),
+      viewerId: user.viewerId,
+      displayName: user.displayName,
+      commenterColor: user.color
     };
     drawOverlay();
     const onMove = (e)=>{
@@ -942,12 +1107,26 @@
       let pin = state.annotations.find(x=>x.type==='pin' && Math.abs(x.time - state.drawing.time) <= eps);
       if (!pin){
         const first = state.drawing.points?.[0] || {x:0.5,y:0.5};
-        pin = { id: guid(), type:'pin', x:first.x, y:first.y, time: state.drawing.time, text:'', color: state.drawing.color || '#5b9cff', createdAt: Date.now() };
+        const user = ensureCurrentUser();
+        pin = {
+          id: guid(),
+          type:'pin',
+          x:first.x,
+          y:first.y,
+          time: state.drawing.time,
+          text:'',
+          color: state.drawing.color || '#5b9cff',
+          createdAt: Date.now(),
+          viewerId: user.viewerId,
+          displayName: user.displayName,
+          commenterColor: user.color
+        };
         state.annotations.push(pin);
       }
       state.drawing.parentId = pin.id;
       state.annotations.push(state.drawing);
       state.drawing = null;
+      markDirty();
       renderList();
       drawOverlay();
       if (wasPlaying) video.play().catch(()=>{});
@@ -1157,12 +1336,17 @@
   // Save/Load full project
   if (saveProjectBtn){
     saveProjectBtn.addEventListener('click', ()=>{
+      const currentUser = ensureCurrentUser();
       const data = {
-        version: 3,
+        version: 4, // Increment version for new identity fields
+        appVersion: APP_VERSION,
         notes: state.notes || '',
         margin: parseFloat(marginInput.value)||0,
         annotations: state.annotations,
         video: state.videoMeta || null,
+        identityMap: state.identityMap,
+        savedBy: currentUser.viewerId,
+        savedAt: new Date().toISOString(),
       };
       const blob = new Blob([JSON.stringify(data,null,2)], { type: 'application/json' });
       const a = document.createElement('a');
@@ -1170,6 +1354,7 @@
       a.download = (state.videoMeta?.name ? state.videoMeta.name.replace(/\.[^.]+$/, '') + '-' : '') + 'project.vfa.json';
       document.body.appendChild(a);
       a.click(); a.remove();
+      markClean();
     });
   }
 
@@ -1184,6 +1369,7 @@
         state.notes = data.notes || '';
         if (projectNotesEl) projectNotesEl.value = state.notes;
         state.videoMeta = data.video || null;
+        state.identityMap = data.identityMap || {};
         state.selectedIds.clear();
         renderList(); drawOverlay(); drawTimeline();
         if (!video.src){
@@ -1196,8 +1382,46 @@
         }
         requestAnimationFrame(()=>{ resizeOverlay(); });
         setMode('select');
+        markClean();
+
+        // Check for unassigned comments and show reassignment dialog
+        checkForUnassignedComments();
       }catch(err){ alert('Failed to load project: ' + err.message); }
     });
+  }
+
+  function checkForUnassignedComments() {
+    const unassigned = state.annotations.filter(a => !a.viewerId || !a.displayName);
+    if (unassigned.length === 0) return;
+
+    // Get all unique existing identities
+    const existingIdentities = new Map();
+    state.annotations.forEach(a => {
+      if (a.viewerId && a.displayName) {
+        existingIdentities.set(a.viewerId, { displayName: a.displayName, color: a.commenterColor });
+      }
+    });
+
+    // Populate reassignment dialog
+    if (reassignSelect && reassignDialog) {
+      reassignSelect.innerHTML = '';
+
+      // Add "New commenter" option
+      const newOption = document.createElement('option');
+      newOption.value = '__new__';
+      newOption.textContent = 'New commenter...';
+      reassignSelect.appendChild(newOption);
+
+      // Add existing identities
+      existingIdentities.forEach((identity, viewerId) => {
+        const option = document.createElement('option');
+        option.value = viewerId;
+        option.textContent = identity.displayName;
+        reassignSelect.appendChild(option);
+      });
+
+      reassignDialog.showModal();
+    }
   }
 
   if (clearAllBtn) {
@@ -1240,6 +1464,52 @@
       exportDialog.showModal();
       expStatusEl.textContent = '';
       expSelectAllChk.checked = true; expUseRangeChk.checked = false; expIncludeNotesChk.checked = true;
+
+      // Populate metadata
+      const expMetadata = document.getElementById('expMetadata');
+      const expFilename = document.getElementById('expFilename');
+      if (expMetadata) {
+        const currentUser = ensureCurrentUser();
+        const meta = state.videoMeta || {};
+        const now = new Date();
+
+        expMetadata.innerHTML = `
+          <div class="metadata-label">Video:</div>
+          <div class="metadata-value">${meta.name || 'N/A'}</div>
+
+          <div class="metadata-label">Duration:</div>
+          <div class="metadata-value">${video.duration ? fmtTime(video.duration) : 'N/A'}</div>
+
+          <div class="metadata-label">Resolution:</div>
+          <div class="metadata-value">${video.videoWidth && video.videoHeight ? `${video.videoWidth}x${video.videoHeight}` : 'N/A'}</div>
+
+          <div class="metadata-label">File Size:</div>
+          <div class="metadata-value">${meta.size ? (meta.size / 1024 / 1024).toFixed(2) + ' MB' : 'N/A'}</div>
+
+          <div class="metadata-label">Exported by:</div>
+          <div class="metadata-value">${currentUser.displayName || 'Anonymous'}</div>
+
+          <div class="metadata-label">Viewer ID:</div>
+          <div class="metadata-value">${currentUser.viewerId.substring(0, 8)}...</div>
+
+          <div class="metadata-label">Export Date:</div>
+          <div class="metadata-value">${now.toLocaleDateString()} ${now.toLocaleTimeString()}</div>
+
+          <div class="metadata-label">App Version:</div>
+          <div class="metadata-value">${APP_VERSION}</div>
+
+          <div class="metadata-label">Total Annotations:</div>
+          <div class="metadata-value">${state.annotations.length}</div>
+        `;
+      }
+
+      // Set default filename
+      if (expFilename && meta.name) {
+        const baseName = meta.name.replace(/\.[^.]+$/, '');
+        const timestamp = now.toISOString().split('T')[0];
+        expFilename.value = `${baseName}-feedback-${timestamp}.pdf`;
+      }
+
       buildExportList();
     });
   }
@@ -1454,6 +1724,116 @@
       hidePlaceholder();
     });
   }
+
+  // Reassignment dialog handler
+  if (reassignBtn && reassignSelect) {
+    reassignBtn.addEventListener('click', () => {
+      const selectedValue = reassignSelect.value;
+
+      if (selectedValue === '__new__') {
+        // Show identity dialog for new commenter
+        if (identityDialog && identityNameInput) {
+          identityNameInput.value = '';
+          identityDialog.showModal();
+        }
+      } else {
+        // Assign to existing commenter
+        const identity = state.identityMap[selectedValue];
+        if (identity) {
+          const unassigned = state.annotations.filter(a => !a.viewerId || !a.displayName);
+          unassigned.forEach(a => {
+            a.viewerId = selectedValue;
+            a.displayName = identity.displayName;
+            a.commenterColor = identity.color || stringToColor(selectedValue);
+          });
+          markDirty();
+          renderList();
+          reassignDialog?.close();
+        }
+      }
+    });
+  }
+
+  // Identity dialog handler
+  if (identitySaveBtn && identityNameInput) {
+    identitySaveBtn.addEventListener('click', () => {
+      const displayName = identityNameInput.value.trim();
+      if (!displayName) {
+        alert('Please enter a display name');
+        return;
+      }
+
+      // Update current user
+      const user = ensureCurrentUser();
+      user.displayName = displayName;
+      saveCurrentUser();
+
+      // Check if we're assigning unassigned comments
+      const unassigned = state.annotations.filter(a => !a.viewerId || !a.displayName);
+      if (unassigned.length > 0) {
+        unassigned.forEach(a => {
+          a.viewerId = user.viewerId;
+          a.displayName = user.displayName;
+          a.commenterColor = user.color;
+        });
+        markDirty();
+        renderList();
+      }
+
+      identityDialog?.close();
+      reassignDialog?.close();
+    });
+  }
+
+  // Unsaved changes guard
+  window.addEventListener('beforeunload', (e) => {
+    if (state.isDirty) {
+      e.preventDefault();
+      e.returnValue = 'You have unsaved changes. Do you want to leave without saving?';
+      return e.returnValue;
+    }
+  });
+
+  // Mark dirty on annotation edits
+  if (annotationListEl) {
+    annotationListEl.addEventListener('input', () => {
+      markDirty();
+    });
+  }
+
+  // Mark dirty on notes edit
+  if (projectNotesEl) {
+    projectNotesEl.addEventListener('input', () => {
+      markDirty();
+    });
+  }
+
+  // Mark dirty when deleting annotations
+  if (clearAllBtn) {
+    const originalClearHandler = clearAllBtn.onclick;
+    clearAllBtn.addEventListener('click', () => {
+      markDirty();
+    });
+  }
+
+  // Mark export time
+  if (expSavePdfBtn) {
+    const originalClickHandler = expSavePdfBtn.onclick;
+    expSavePdfBtn.addEventListener('click', () => {
+      state.lastExportTime = Date.now();
+    });
+  }
+
+  // Initialize user on startup
+  ensureCurrentUser();
+
+  // Show identity dialog if no display name set
+  setTimeout(() => {
+    const user = ensureCurrentUser();
+    if (!user.displayName && identityDialog && identityNameInput) {
+      identityDialog.showModal();
+    }
+  }, 500);
 
   // Initial
   setMode('select');
