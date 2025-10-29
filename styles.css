@@ -539,6 +539,38 @@ video {
 }
 
 /* =========================================================
+   Waveform Visualizations
+   ========================================================= */
+.waveform-wrapper {
+  height: 40px;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border-color);
+  padding: 4px 12px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.waveform-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  width: 12px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.waveform-canvas {
+  flex: 1;
+  height: 100%;
+  display: block;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+}
+
+/* =========================================================
    Vertical Divider (Splitter)
    ========================================================= */
 .vertical-divider {

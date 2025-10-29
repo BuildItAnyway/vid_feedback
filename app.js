@@ -61,11 +61,6 @@
   const expIncludeNotesChk = document.getElementById('expIncludeNotes');
   const expUseRangeChk = document.getElementById('expUseRange');
   const expStatusEl = document.getElementById('expStatus');
-  // Audio analysis
-  const anEnable = document.getElementById('anEnable');
-  const anShortEl = document.getElementById('anShort');
-  const anIntEl = document.getElementById('anIntegrated');
-  const anPeakEl = document.getElementById('anPeak');
 
   let state = {
     annotations: [],
@@ -85,63 +80,17 @@
     pendingEdit: null,
     seek: { timer:null, holdTimer:null, dir:0, start:0 },
     selectedIds: new Set(),
-    audio: { ctx:null, src:null, hp:null, hs:null, analyser:null, raf:null, enabled:false, peak: -Infinity, intSum:0, intCount:0, history:[] },
+    waveformData: { left: null, right: null }, // Audio waveform data for visualization
   };
 
   const hidePlaceholder = ()=>{ const ph=document.getElementById('placeholder'); if (ph) ph.style.display='none'; };
   const showPlaceholder = ()=>{ const ph=document.getElementById('placeholder'); if (ph) ph.style.display='flex'; };
 
-  // --- Audio analysis helpers (approximate LUFS) ---
-  function setupAudioAnalysis(){
-    if (!video) return;
-    const a = state.audio; if (a.ctx) return;
-    try{
-      const ctx = new (window.AudioContext||window.webkitAudioContext)();
-      const src = ctx.createMediaElementSource(video);
-      const hp = ctx.createBiquadFilter(); hp.type='highpass'; hp.frequency.value = 60; hp.Q.value = 0.5;
-      const hs = ctx.createBiquadFilter(); hs.type='highshelf'; hs.frequency.value = 4000; hs.gain.value = 4;
-      const analyser = ctx.createAnalyser(); analyser.fftSize = 2048; analyser.smoothingTimeConstant = 0.0;
-      src.connect(hp); hp.connect(hs); hs.connect(analyser);
-      a.ctx=ctx; a.src=src; a.hp=hp; a.hs=hs; a.analyser=analyser; a.enabled=true;
-    }catch(err){ console.error('Audio analysis init failed', err); a.enabled=false; }
-  }
-  function db(val){ return 20*Math.log10(val); }
-  function formatNum(n){ if (!isFinite(n)) return '—'; return n.toFixed(1); }
-  function classifyLufs(lufs){ if (!isFinite(lufs)) return 'bad'; const diff = Math.abs(lufs - (-14)); if (diff<=1) return 'ok'; if (diff<=3) return 'warn'; return 'bad'; }
-  function tickAnalysis(){
-    const a = state.audio; if (!a.enabled || !a.analyser) return;
-    const buf = new Float32Array(a.analyser.fftSize);
-    a.analyser.getFloatTimeDomainData(buf);
-    // RMS
-    let sum=0, peak=0; for (let i=0;i<buf.length;i++){ const v=buf[i]; sum+=v*v; if (Math.abs(v)>peak) peak=Math.abs(v); }
-    const rms = Math.sqrt(sum/buf.length) || 1e-12;
-    // Approx K-weighted short-term LUFS: use RMS dBFS with small offset
-    const lufsMomentary = db(rms) - 0.1; // trivial offset to approximate
-    // Build 3s short-term average using history of 400ms windows
-    const now = performance.now();
-    a.history.push({ t: now, lufs: lufsMomentary });
-    while (a.history.length && now - a.history[0].t > 3000) a.history.shift();
-    const st = a.history.length ? a.history.reduce((s,x)=>s+x.lufs,0)/a.history.length : lufsMomentary;
-    // Integrated (simple gated average)
-    if (st > -70){ a.intSum += st; a.intCount += 1; }
-    const integrated = a.intCount ? (a.intSum / a.intCount) : st;
-    // Peak in dBFS
-    const peakDb = db(peak || 1e-12);
-    a.peak = Math.max(a.peak, peakDb);
-    // Update UI
-    if (anShortEl){ anShortEl.textContent = formatNum(st); anShortEl.className = classifyLufs(st); }
-    if (anIntEl){ anIntEl.textContent = formatNum(integrated); anIntEl.className = classifyLufs(integrated); }
-    if (anPeakEl){ anPeakEl.textContent = isFinite(peakDb)? peakDb.toFixed(1) : '—'; }
-    a.raf = requestAnimationFrame(tickAnalysis);
-  }
-  function startAnalysis(){
-    setupAudioAnalysis();
-    const a = state.audio; a.enabled = true; if (a.ctx?.state==='suspended') a.ctx.resume();
-    if (!a.raf) a.raf = requestAnimationFrame(tickAnalysis);
-  }
-  function stopAnalysis(){
-    const a = state.audio; a.enabled = false; if (a.raf){ cancelAnimationFrame(a.raf); a.raf=null; }
-  }
+  // Waveform canvas references
+  const waveformLeftCanvas = document.getElementById('waveformLeft');
+  const waveformRightCanvas = document.getElementById('waveformRight');
+  const waveformLeftCtx = waveformLeftCanvas?.getContext('2d');
+  const waveformRightCtx = waveformRightCanvas?.getContext('2d');
 
   function visibleRange(){
     const dur = video.duration || 0;
@@ -456,6 +405,119 @@
       tl.arc(px, 8, 2.5, 0, Math.PI * 2);
       tl.fill();
     }
+  }
+
+  // Extract audio waveform data from video
+  async function extractWaveformData() {
+    if (!video.src || !video.duration) return;
+
+    try {
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      const response = await fetch(video.src);
+      const arrayBuffer = await response.arrayBuffer();
+      const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+      // Extract left and right channels
+      const leftChannel = audioBuffer.getChannelData(0);
+      const rightChannel = audioBuffer.numberOfChannels > 1 ? audioBuffer.getChannelData(1) : leftChannel;
+
+      // Downsample for visualization (1000 samples per second of audio)
+      const samplesPerPixel = Math.max(1, Math.floor(audioBuffer.sampleRate / 1000));
+      const leftData = downsampleAudio(leftChannel, samplesPerPixel);
+      const rightData = downsampleAudio(rightChannel, samplesPerPixel);
+
+      state.waveformData = { left: leftData, right: rightData };
+      drawWaveforms();
+    } catch (err) {
+      console.error('Failed to extract waveform:', err);
+    }
+  }
+
+  function downsampleAudio(channelData, samplesPerPixel) {
+    const downsampled = [];
+    for (let i = 0; i < channelData.length; i += samplesPerPixel) {
+      let min = 1, max = -1;
+      for (let j = 0; j < samplesPerPixel && i + j < channelData.length; j++) {
+        const sample = channelData[i + j];
+        if (sample < min) min = sample;
+        if (sample > max) max = sample;
+      }
+      downsampled.push({ min, max });
+    }
+    return downsampled;
+  }
+
+  function drawWaveform(canvas, ctx, data, color) {
+    if (!canvas || !ctx || !data) return;
+
+    const rect = canvas.parentElement.getBoundingClientRect();
+    const width = Math.max(200, Math.floor(rect.width - 20)); // Account for label
+    const height = Math.floor(rect.height - 8); // Account for padding
+
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
+    }
+
+    ctx.clearRect(0, 0, width, height);
+
+    const { start, end } = visibleRange();
+    const dur = video.duration || 0;
+    if (!dur) return;
+
+    // Calculate which samples to show based on visible range
+    const samplesPerSecond = data.length / dur;
+    const startSample = Math.floor(start * samplesPerSecond);
+    const endSample = Math.ceil(end * samplesPerSecond);
+    const visibleData = data.slice(startSample, endSample);
+
+    if (visibleData.length === 0) return;
+
+    const midY = height / 2;
+    const barWidth = Math.max(1, width / visibleData.length);
+
+    // Draw waveform
+    ctx.fillStyle = color;
+    ctx.strokeStyle = color;
+
+    for (let i = 0; i < visibleData.length; i++) {
+      const x = (i / visibleData.length) * width;
+      const sample = visibleData[i];
+
+      const minY = midY - (sample.min * midY);
+      const maxY = midY - (sample.max * midY);
+      const barHeight = Math.max(1, maxY - minY);
+
+      ctx.fillRect(x, minY, Math.max(barWidth, 1), barHeight);
+    }
+
+    // Draw center line
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, midY);
+    ctx.lineTo(width, midY);
+    ctx.stroke();
+
+    // Draw playhead position
+    const t = video.currentTime || 0;
+    if (t >= start && t <= end) {
+      const span = Math.max(0.001, end - start);
+      const px = ((t - start) / span) * width;
+      ctx.strokeStyle = '#06c167';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(px, 0);
+      ctx.lineTo(px, height);
+      ctx.stroke();
+    }
+  }
+
+  function drawWaveforms() {
+    if (!state.waveformData.left || !state.waveformData.right) return;
+
+    drawWaveform(waveformLeftCanvas, waveformLeftCtx, state.waveformData.left, '#4a9eff');
+    drawWaveform(waveformRightCanvas, waveformRightCtx, state.waveformData.right, '#ff6b6b');
   }
 
   function setMode(mode){
@@ -780,10 +842,12 @@
     // refresh meta with duration when possible
     const srcMeta = state.videoMeta || {};
     state.videoMeta = { ...srcMeta, duration: video.duration||0 };
+    // Extract audio waveform data
+    extractWaveformData();
   });
   window.addEventListener('resize', resizeOverlay);
-  video.addEventListener('timeupdate', ()=>{ drawOverlay(); drawTimeline(); timecodeEl.textContent = fmtTime(video.currentTime||0); markAndRevealClosest(); });
-  video.addEventListener('seeked', ()=>{ drawOverlay(); drawTimeline(); markAndRevealClosest(); });
+  video.addEventListener('timeupdate', ()=>{ drawOverlay(); drawTimeline(); drawWaveforms(); timecodeEl.textContent = fmtTime(video.currentTime||0); markAndRevealClosest(); });
+  video.addEventListener('seeked', ()=>{ drawOverlay(); drawTimeline(); drawWaveforms(); markAndRevealClosest(); });
 
   function scrollCardIntoViewById(id){
     const el = annotationListEl.querySelector(`.card[data-id="${id}"]`);
@@ -993,6 +1057,7 @@
         const dx = e.clientX - panStart.x;
         state.offset = Math.max(0, Math.min(dur - span, panStart.offset - dx*secPerPx));
         drawTimeline();
+        drawWaveforms();
       }
     });
     window.addEventListener('mouseup', ()=>{ 
@@ -1006,13 +1071,14 @@
     zoomInput.addEventListener('input', ()=>{
       const old = state.zoom;
       state.zoom = Math.max(1, parseInt(zoomInput.value,10)||1);
-      const dur = video.duration || 0; if (!dur){ drawTimeline(); return; }
+      const dur = video.duration || 0; if (!dur){ drawTimeline(); drawWaveforms(); return; }
       const { start, end } = visibleRange();
       const spanOld = (old<=1? dur : dur/old);
       const spanNew = (state.zoom<=1? dur : dur/state.zoom);
       const center = video.currentTime || 0;
       state.offset = Math.max(0, Math.min(dur - spanNew, center - spanNew/2));
       drawTimeline();
+      drawWaveforms();
     });
   }
 
@@ -1022,11 +1088,6 @@
   if (clearRangeBtn) clearRangeBtn.addEventListener('click', ()=>{ state.markIn = null; state.markOut = null; drawTimeline(); });
 
   marginInput.addEventListener('change', ()=>{ drawOverlay(); });
-
-  // Audio analysis toggle
-  anEnable?.addEventListener('change', ()=>{
-    if (anEnable.checked) startAnalysis(); else stopAnalysis();
-  });
 
   // Legacy saveJson functionality - optional button
   if (saveJsonBtn) {
