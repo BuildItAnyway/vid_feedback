@@ -1361,34 +1361,36 @@
     if (anEnable.checked) startAnalysis(); else stopAnalysis();
   });
 
-  saveJsonBtn.addEventListener('click', ()=>{
-    const data = {
-      version: 4,
-      appVersion: state.appVersion,
-      margin: parseFloat(marginInput.value)||0,
-      annotations: state.annotations,
-      notes: state.notes || '',
-      userMapping: state.userMapping || {},
-      currentUser: state.currentUser || null,
-      createdAt: state.createdAt || Date.now(),
-      exportTimestamp: Date.now(),
-      videoMetadata: state.videoMeta ? {
-        filename: state.videoMeta.name,
-        duration: state.videoMeta.duration || video.duration,
-        type: state.videoMeta.type,
-        size: state.videoMeta.size,
-        lastModified: state.videoMeta.lastModified
-      } : null
-    };
-    const blob = new Blob([JSON.stringify(data,null,2)], { type: 'application/json' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'annotations.json';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    state.hasUnsavedChanges = false;
-  });
+  if (saveJsonBtn) {
+    saveJsonBtn.addEventListener('click', ()=>{
+      const data = {
+        version: 4,
+        appVersion: state.appVersion,
+        margin: parseFloat(marginInput.value)||0,
+        annotations: state.annotations,
+        notes: state.notes || '',
+        userMapping: state.userMapping || {},
+        currentUser: state.currentUser || null,
+        createdAt: state.createdAt || Date.now(),
+        exportTimestamp: Date.now(),
+        videoMetadata: state.videoMeta ? {
+          filename: state.videoMeta.name,
+          duration: state.videoMeta.duration || video.duration,
+          type: state.videoMeta.type,
+          size: state.videoMeta.size,
+          lastModified: state.videoMeta.lastModified
+        } : null
+      };
+      const blob = new Blob([JSON.stringify(data,null,2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'annotations.json';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      state.hasUnsavedChanges = false;
+    });
+  }
 
   // Filters UI
   function syncFilters(){
@@ -1683,7 +1685,7 @@
     else if (e.key==='s' || e.key==='S'){ setMode('select'); }
     else if (e.key==='m' || e.key==='M'){ setMode('pin'); }
     else if (e.key==='b' || e.key==='B'){ setMode('draw'); }
-    else if ((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='s'){ e.preventDefault(); saveJsonBtn.click(); }
+    else if ((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='s'){ e.preventDefault(); saveJsonBtn?.click(); }
     else if (e.key==='i' || e.key==='I'){ state.markIn = video.currentTime||0; drawTimeline(); }
     else if (e.key==='o' || e.key==='O'){ state.markOut = video.currentTime||0; drawTimeline(); }
     else if (e.key==='x' || e.key==='X'){ state.markIn = null; state.markOut = null; drawTimeline(); }
