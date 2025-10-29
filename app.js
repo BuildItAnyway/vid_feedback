@@ -86,10 +86,137 @@
     seek: { timer:null, holdTimer:null, dir:0, start:0 },
     selectedIds: new Set(),
     audio: { ctx:null, src:null, hp:null, hs:null, analyser:null, raf:null, enabled:false, peak: -Infinity, intSum:0, intCount:0, history:[] },
+    currentUser: null, // { viewerId: string, displayName: string, color: string }
+    userMapping: {}, // viewerId -> { displayName, color }
+    appVersion: '1.0.2', // Restore version tracking
+    hasUnsavedChanges: false,
+    lastExportPath: null,
   };
 
   const hidePlaceholder = ()=>{ const ph=document.getElementById('placeholder'); if (ph) ph.style.display='none'; };
   const showPlaceholder = ()=>{ const ph=document.getElementById('placeholder'); if (ph) ph.style.display='flex'; };
+
+  // --- User identity management ---
+  function initializeCurrentUser() {
+    // Try to load from localStorage
+    const stored = localStorage.getItem('vid_feedback_user');
+    if (stored) {
+      try {
+        state.currentUser = JSON.parse(stored);
+        // Ensure color is set
+        if (!state.currentUser.color) {
+          state.currentUser.color = generateColorFromId(state.currentUser.viewerId);
+        }
+        return;
+      } catch (e) {
+        console.error('Failed to parse stored user', e);
+      }
+    }
+
+    // Create new user with UUID
+    const viewerId = uuidv4();
+    const color = generateColorFromId(viewerId);
+    state.currentUser = {
+      viewerId,
+      displayName: null, // Will be set on first comment
+      color
+    };
+    saveCurrentUser();
+  }
+
+  function saveCurrentUser() {
+    if (state.currentUser) {
+      localStorage.setItem('vid_feedback_user', JSON.stringify(state.currentUser));
+    }
+  }
+
+  function promptForDisplayName(callback) {
+    const name = prompt('Enter your display name:', state.currentUser?.displayName || '');
+    if (name && name.trim()) {
+      if (!state.currentUser) {
+        initializeCurrentUser();
+      }
+      state.currentUser.displayName = name.trim();
+      state.userMapping[state.currentUser.viewerId] = {
+        displayName: state.currentUser.displayName,
+        color: state.currentUser.color
+      };
+      saveCurrentUser();
+      markUnsavedChanges();
+      if (callback) callback();
+    }
+  }
+
+  function ensureUserHasName(callback) {
+    if (!state.currentUser || !state.currentUser.displayName) {
+      promptForDisplayName(callback);
+    } else {
+      if (callback) callback();
+    }
+  }
+
+  function markUnsavedChanges() {
+    state.hasUnsavedChanges = true;
+  }
+
+  // Show dialog to reassign unassigned comments
+  function showReassignmentDialog(unassignedAnnotations) {
+    // Get list of existing display names from userMapping
+    const existingNames = Object.values(state.userMapping).map(u => u.displayName).filter(Boolean);
+    const uniqueNames = [...new Set(existingNames)];
+
+    let message = `Found ${unassignedAnnotations.length} unassigned comment(s).\n\nAssign all unassigned comments to:\n\n`;
+    uniqueNames.forEach((name, idx) => {
+      message += `${idx + 1}. ${name}\n`;
+    });
+    message += `${uniqueNames.length + 1}. New commenter...\n\n`;
+    message += `Enter the number of your choice:`;
+
+    const choice = prompt(message);
+    if (!choice) return; // User cancelled
+
+    const choiceNum = parseInt(choice, 10);
+    if (isNaN(choiceNum) || choiceNum < 1 || choiceNum > uniqueNames.length + 1) {
+      alert('Invalid choice');
+      return;
+    }
+
+    let targetViewerId, targetDisplayName, targetColor;
+
+    if (choiceNum <= uniqueNames.length) {
+      // Existing user selected
+      const selectedName = uniqueNames[choiceNum - 1];
+      // Find the viewerId for this displayName
+      const entry = Object.entries(state.userMapping).find(([vid, user]) => user.displayName === selectedName);
+      if (entry) {
+        targetViewerId = entry[0];
+        targetDisplayName = entry[1].displayName;
+        targetColor = entry[1].color;
+      }
+    } else {
+      // New commenter
+      const newName = prompt('Enter display name for new commenter:');
+      if (!newName || !newName.trim()) {
+        alert('Invalid name');
+        return;
+      }
+      targetViewerId = uuidv4();
+      targetDisplayName = newName.trim();
+      targetColor = generateColorFromId(targetViewerId);
+      state.userMapping[targetViewerId] = { displayName: targetDisplayName, color: targetColor };
+    }
+
+    // Assign all unassigned annotations to this user
+    unassignedAnnotations.forEach(a => {
+      a.viewerId = targetViewerId;
+      a.displayName = targetDisplayName;
+      a.color = targetColor;
+    });
+
+    markUnsavedChanges();
+    renderList();
+    drawOverlay();
+  }
 
   // --- Audio analysis helpers (approximate LUFS) ---
   function setupAudioAnalysis(){
@@ -508,7 +635,10 @@
       const meta = a.type==='path'
         ? `t=${fmtTime(a.time)} | drawing (${(a.points?.length||0)} pts, ${(a.width||3)}px)`
         : `t=${fmtTime(a.time)} | (x=${(((a.x||0)*100).toFixed(1))}%, y=${(((a.y||0)*100).toFixed(1))}%)`;
-      header.innerHTML = `<div class="meta">${meta}</div>`;
+      const commenterBadge = a.displayName
+        ? `<span class="commenter-badge" style="background: ${a.color}; color: white; padding: 2px 6px; border-radius: 3px; font-size: 10px; margin-left: 8px;">${a.displayName}</span>`
+        : '';
+      header.innerHTML = `<div class="meta">${meta}${commenterBadge}</div>`;
       const metaRow = document.createElement('div');
       metaRow.className = 'row';
       const tagInput = document.createElement('input');
@@ -516,11 +646,11 @@
       tagInput.setAttribute('list','tagsDatalist');
       tagInput.value = a.tag || '';
       tagInput.style.maxWidth = '120px';
-      tagInput.addEventListener('input', ()=>{ a.tag = tagInput.value.trim(); a.updatedAt = Date.now(); drawTimeline(); });
+      tagInput.addEventListener('input', ()=>{ a.tag = tagInput.value.trim(); a.updatedAt = Date.now(); markUnsavedChanges(); drawTimeline(); });
       const colorInputInline = document.createElement('input');
       colorInputInline.type = 'color';
       colorInputInline.value = a.color || (a.type==='path' ? (a.color||'#e6b35a') : '#5b9cff');
-      colorInputInline.addEventListener('input', ()=>{ a.color = colorInputInline.value; a.updatedAt = Date.now(); drawOverlay(); drawTimeline(); });
+      colorInputInline.addEventListener('input', ()=>{ a.color = colorInputInline.value; a.updatedAt = Date.now(); markUnsavedChanges(); drawOverlay(); drawTimeline(); });
       metaRow.appendChild(tagInput);
       metaRow.appendChild(colorInputInline);
 
@@ -542,8 +672,8 @@
         }
       };
       updateChips();
-      text.addEventListener('input', ()=>{ a.text = text.value; a.updatedAt = Date.now(); updateChips(); });
-      text.addEventListener('blur', ()=>{ a.text = text.value.trim(); a.updatedAt = Date.now(); if (state.pendingEdit && state.pendingEdit.id===a.id){ const was=state.pendingEdit.wasPlaying; state.pendingEdit=null; if (was) video.play().catch(()=>{}); } });
+      text.addEventListener('input', ()=>{ a.text = text.value; a.updatedAt = Date.now(); markUnsavedChanges(); updateChips(); });
+      text.addEventListener('blur', ()=>{ a.text = text.value.trim(); a.updatedAt = Date.now(); markUnsavedChanges(); if (state.pendingEdit && state.pendingEdit.id===a.id){ const was=state.pendingEdit.wasPlaying; state.pendingEdit=null; if (was) video.play().catch(()=>{}); } });
       text.addEventListener('keydown', (e)=>{ if (e.key==='Enter' && !e.shiftKey){ e.preventDefault(); text.blur(); } });
       const actions = document.createElement('div');
       actions.className = 'actions';
@@ -554,6 +684,7 @@
       del.textContent = 'Delete';
       del.addEventListener('click', ()=>{
         state.annotations = state.annotations.filter(x=>x.id!==a.id);
+        markUnsavedChanges();
         renderList(); drawOverlay();
       });
       actions.append(jump, del);
@@ -582,7 +713,18 @@
     let x=0.5, y=0.5; if (pins.length){ x = pins.reduce((s,p)=>s+(p.x||0),0)/pins.length; y = pins.reduce((s,p)=>s+(p.y||0),0)/pins.length; }
     const color = (pins[0]?.color) || selected[0]?.color || '#5b9cff';
     const text = pins.map(p=>p.text).filter(Boolean).join('\n');
-    const newPin = { id: guid(), type:'pin', x, y, time:tMid, text, color, createdAt: Date.now() };
+    const newPin = {
+      id: guid(),
+      type:'pin',
+      x,
+      y,
+      time:tMid,
+      text,
+      color,
+      createdAt: Date.now(),
+      viewerId: state.currentUser?.viewerId,
+      displayName: state.currentUser?.displayName
+    };
     // Reassign drawings to new pin
     const drawings = state.annotations.filter(a=> a.type==='path' && ids.includes(a.parentId || a.id));
     drawings.forEach(d=>{ d.parentId = newPin.id; d.time = tMid; });
@@ -590,11 +732,71 @@
     const removeIds = new Set(pins.map(p=>p.id));
     state.annotations = state.annotations.filter(a=> !removeIds.has(a.id));
     state.annotations.push(newPin);
+    markUnsavedChanges();
     state.selectedIds.clear();
     renderList(); drawTimeline(); video.currentTime = tMid; video.pause();
   }
 
   function guid(){return Math.random().toString(36).slice(2)+Date.now().toString(36)}
+
+  // UUID v4 generator for viewerId
+  function uuidv4() {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+      const r = Math.random() * 16 | 0;
+      const v = c === 'x' ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
+    });
+  }
+
+  // Generate deterministic color from viewerId (UUID)
+  function generateColorFromId(viewerId) {
+    // Simple hash function for consistency
+    let hash = 0;
+    for (let i = 0; i < viewerId.length; i++) {
+      hash = viewerId.charCodeAt(i) + ((hash << 5) - hash);
+    }
+
+    // Generate HSL color with good saturation and lightness for visibility
+    const hue = Math.abs(hash % 360);
+    const saturation = 65 + (Math.abs(hash >> 8) % 20); // 65-85%
+    const lightness = 50 + (Math.abs(hash >> 16) % 15); // 50-65%
+
+    // Convert HSL to RGB then to hex
+    const h = hue / 360;
+    const s = saturation / 100;
+    const l = lightness / 100;
+
+    let r, g, b;
+    if (s === 0) {
+      r = g = b = l;
+    } else {
+      const hue2rgb = (p, q, t) => {
+        if (t < 0) t += 1;
+        if (t > 1) t -= 1;
+        if (t < 1/6) return p + (q - p) * 6 * t;
+        if (t < 1/2) return q;
+        if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+        return p;
+      };
+      const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+      const p = 2 * l - q;
+      r = hue2rgb(p, q, h + 1/3);
+      g = hue2rgb(p, q, h);
+      b = hue2rgb(p, q, h - 1/3);
+    }
+
+    const toHex = x => {
+      const hex = Math.round(x * 255).toString(16);
+      return hex.length === 1 ? '0' + hex : hex;
+    };
+
+    return '#' + toHex(r) + toHex(g) + toHex(b);
+  }
+
+  // Get short hash from viewerId for display
+  function shortHash(viewerId) {
+    return viewerId ? viewerId.substring(0, 8) : '';
+  }
 
   function normCoords(evt){
     const r = overlay.getBoundingClientRect();
@@ -603,11 +805,13 @@
     return { x: Math.max(0,Math.min(1,x)), y: Math.max(0,Math.min(1,y)) };
   }
 
-  async function exportPdf(){
+  async function exportPdf(items = null, opts = {}){
     if (!video.src){ alert('Load a video first'); return; }
     const { jsPDF } = window.jspdf || {};
     if (!jsPDF){ alert('jsPDF failed to load'); return; }
-    const items = [...state.annotations].sort((a,b)=>a.time-b.time);
+    if (!items) {
+      items = [...state.annotations].sort((a,b)=>a.time-b.time);
+    }
     if (items.length===0){ alert('No annotations to export'); return; }
 
     const wasPaused = video.paused;
@@ -700,20 +904,87 @@
       try { video.currentTime = Math.min(Math.max(time, 0), (video.duration||time)); }
       catch (e){ cleanup(); reject(e); }
     });
-    // Optional cover page with project notes
-    if ((opts?.includeNotes ?? true) && state.notes && String(state.notes).trim()){
-      pdf.setFontSize(18);
-      pdf.text('Video Annotations', 20, 30);
-      pdf.setFontSize(12);
+    // Rich metadata cover page
+    if ((opts?.includeNotes ?? true) || true){ // Always show metadata header
+      pdf.setFontSize(20);
+      pdf.text('Video Feedback Report', 20, 30);
+
+      pdf.setFontSize(10);
+      pdf.setTextColor(100, 100, 100);
+      const now = new Date();
+      pdf.text(`Generated: ${now.toLocaleDateString()} ${now.toLocaleTimeString()}`, 20, 45);
+      pdf.text(`App Version: ${state.appVersion || '1.0.2'}`, 20, 55);
+      pdf.setTextColor(0, 0, 0);
+
+      // Video Metadata Section
+      pdf.setFontSize(14);
+      pdf.text('Video Information', 20, 75);
+      pdf.setFontSize(10);
       const meta = state.videoMeta || {};
-      const parts = [];
-      if (meta.name) parts.push('File: ' + meta.name);
-      if (video.duration) parts.push('Duration: ' + fmtTime(video.duration));
-      if (parts.length) pdf.text(parts.join('  |  '), 20, 50);
-      pdf.setFontSize(14); pdf.text('Project Notes', 20, 80);
-      pdf.setFontSize(12);
-      const wrapped = pdf.splitTextToSize(String(state.notes), pageW - 40);
-      pdf.text(wrapped, 20, 100);
+      let yPos = 90;
+      if (meta.name) { pdf.text(`Filename: ${meta.name}`, 30, yPos); yPos += 12; }
+      if (video.duration) { pdf.text(`Duration: ${fmtTime(video.duration)}`, 30, yPos); yPos += 12; }
+      if (video.videoWidth && video.videoHeight) {
+        pdf.text(`Resolution: ${video.videoWidth}x${video.videoHeight}`, 30, yPos);
+        yPos += 12;
+      }
+      if (meta.size) {
+        const sizeMB = (meta.size / (1024 * 1024)).toFixed(2);
+        pdf.text(`File Size: ${sizeMB} MB`, 30, yPos);
+        yPos += 12;
+      }
+      if (meta.lastModified) {
+        const modDate = new Date(meta.lastModified);
+        pdf.text(`Last Modified: ${modDate.toLocaleDateString()}`, 30, yPos);
+        yPos += 12;
+      }
+
+      // User Information Section
+      yPos += 8;
+      pdf.setFontSize(14);
+      pdf.text('Export Information', 20, yPos);
+      yPos += 15;
+      pdf.setFontSize(10);
+      if (state.currentUser) {
+        pdf.text(`Exported by: ${state.currentUser.displayName || 'Anonymous'}`, 30, yPos);
+        yPos += 12;
+        pdf.text(`User ID: ${shortHash(state.currentUser.viewerId)}`, 30, yPos);
+        yPos += 12;
+      }
+      pdf.text(`Total Annotations: ${state.annotations.length}`, 30, yPos);
+      yPos += 12;
+      pdf.text(`Annotations in Export: ${items.length}`, 30, yPos);
+      yPos += 12;
+
+      // Contributors
+      const contributors = Object.values(state.userMapping || {});
+      if (contributors.length > 0) {
+        yPos += 8;
+        pdf.setFontSize(14);
+        pdf.text('Contributors', 20, yPos);
+        yPos += 15;
+        pdf.setFontSize(10);
+        contributors.forEach(user => {
+          if (user.displayName) {
+            pdf.setFillColor(user.color || '#5b9cff');
+            pdf.circle(32, yPos - 3, 2, 'F');
+            pdf.text(`${user.displayName}`, 40, yPos);
+            yPos += 12;
+          }
+        });
+      }
+
+      // Project Notes
+      if (state.notes && String(state.notes).trim()) {
+        yPos += 8;
+        pdf.setFontSize(14);
+        pdf.text('Project Notes', 20, yPos);
+        yPos += 15;
+        pdf.setFontSize(10);
+        const wrapped = pdf.splitTextToSize(String(state.notes), pageW - 50);
+        pdf.text(wrapped, 30, yPos);
+      }
+
       pdf.addPage('a4','landscape');
     }
 
@@ -745,7 +1016,9 @@
       let yy = y + imgH + 24;
       const maxTextWidth = pageW - 40;
       for (const p of annos){
-        const label = p.type==='path' ? (p.text ? `- [drawing] ${p.text}` : '- [drawing]') : `- ${p.text}`;
+        // Include commenter info
+        const commenterInfo = p.displayName ? ` [${p.displayName}]` : '';
+        const label = p.type==='path' ? (p.text ? `- [drawing]${commenterInfo} ${p.text}` : `- [drawing]${commenterInfo}`) : `- ${p.text}${commenterInfo}`;
         if (!label) continue;
         const wrapped = pdf.splitTextToSize(label, maxTextWidth);
         pdf.text(wrapped, 20, yy);
@@ -778,6 +1051,10 @@
     // refresh meta with duration when possible
     const srcMeta = state.videoMeta || {};
     state.videoMeta = { ...srcMeta, duration: video.duration||0 };
+    // Set project creation timestamp if not already set
+    if (!state.createdAt) {
+      state.createdAt = Date.now();
+    }
   });
   window.addEventListener('resize', resizeOverlay);
   video.addEventListener('timeupdate', ()=>{ drawOverlay(); drawTimeline(); timecodeEl.textContent = fmtTime(video.currentTime||0); markAndRevealClosest(); });
@@ -819,75 +1096,119 @@
   // Pin placement (inline, no modal)
   overlay.addEventListener('click', (evt)=>{
     if (state.mode !== 'pin') return;
-    const { x, y } = normCoords(evt);
-    const a = { id: guid(), type:'pin', x, y, time: video.currentTime, text:'', createdAt: Date.now(), color: colorInput ? colorInput.value : '#5b9cff' };
-    state.annotations.push(a);
-    if (!video.paused){ state.pendingEdit = { id: a.id, wasPlaying: true }; video.pause(); }
-    setMode('select');
-    renderList();
-    const lastCard = annotationListEl.lastElementChild; // focus newest
-    if (lastCard){ const ta = lastCard.querySelector('textarea'); ta?.focus(); scrollCardIntoViewById(a.id); }
-    drawOverlay();
+    ensureUserHasName(() => {
+      const { x, y } = normCoords(evt);
+      const a = {
+        id: guid(),
+        type:'pin',
+        x,
+        y,
+        time: video.currentTime,
+        text:'',
+        createdAt: Date.now(),
+        color: state.currentUser?.color || (colorInput ? colorInput.value : '#5b9cff'),
+        viewerId: state.currentUser?.viewerId,
+        displayName: state.currentUser?.displayName
+      };
+      state.annotations.push(a);
+      markUnsavedChanges();
+      if (!video.paused){ state.pendingEdit = { id: a.id, wasPlaying: true }; video.pause(); }
+      setMode('select');
+      renderList();
+      const lastCard = annotationListEl.lastElementChild; // focus newest
+      if (lastCard){ const ta = lastCard.querySelector('textarea'); ta?.focus(); scrollCardIntoViewById(a.id); }
+      drawOverlay();
+    });
   });
 
   // Quick Pin: Shift+click on the video while in Select mode
   video.addEventListener('click', (evt)=>{
     if (state.mode !== 'select') return;
     if (!evt.shiftKey) return;
-    const r = video.getBoundingClientRect();
-    const x = (evt.clientX - r.left) / r.width;
-    const y = (evt.clientY - r.top) / r.height;
-    const a = { id: guid(), type:'pin', x:Math.max(0,Math.min(1,x)), y:Math.max(0,Math.min(1,y)), time: video.currentTime, text:'', createdAt: Date.now(), color: colorInput ? colorInput.value : '#5b9cff' };
-    state.annotations.push(a);
-    const wasPlayingNow = !video.paused; if (wasPlayingNow) video.pause(); state.pendingEdit = { id: a.id, wasPlaying: wasPlayingNow };
-    renderList(); drawOverlay();
-    const lastCard = annotationListEl.lastElementChild; if (lastCard){ lastCard.querySelector('textarea')?.focus(); scrollCardIntoViewById(a.id); }
+    ensureUserHasName(() => {
+      const r = video.getBoundingClientRect();
+      const x = (evt.clientX - r.left) / r.width;
+      const y = (evt.clientY - r.top) / r.height;
+      const a = {
+        id: guid(),
+        type:'pin',
+        x:Math.max(0,Math.min(1,x)),
+        y:Math.max(0,Math.min(1,y)),
+        time: video.currentTime,
+        text:'',
+        createdAt: Date.now(),
+        color: state.currentUser?.color || (colorInput ? colorInput.value : '#5b9cff'),
+        viewerId: state.currentUser?.viewerId,
+        displayName: state.currentUser?.displayName
+      };
+      state.annotations.push(a);
+      markUnsavedChanges();
+      const wasPlayingNow = !video.paused; if (wasPlayingNow) video.pause(); state.pendingEdit = { id: a.id, wasPlaying: wasPlayingNow };
+      renderList(); drawOverlay();
+      const lastCard = annotationListEl.lastElementChild; if (lastCard){ lastCard.querySelector('textarea')?.focus(); scrollCardIntoViewById(a.id); }
+    });
   });
 
   // Drawing
   let wasPlaying = false;
   overlay.addEventListener('mousedown', (evt)=>{
     if (state.mode !== 'draw') return;
-    evt.preventDefault();
-    const pt = normCoords(evt);
-    wasPlaying = !video.paused;
-    video.pause();
-    state.drawing = {
-      id: guid(),
-      type: 'path',
-      time: video.currentTime,
-      color: colorInput ? colorInput.value : '#5b9cff',
-      width: widthInput ? (parseInt(widthInput.value,10)||3) : 3,
-      points: [pt],
-      text: '',
-      createdAt: Date.now(),
-    };
-    drawOverlay();
-    const onMove = (e)=>{
-      const p = normCoords(e);
-      state.drawing.points.push(p);
+    ensureUserHasName(() => {
+      evt.preventDefault();
+      const pt = normCoords(evt);
+      wasPlaying = !video.paused;
+      video.pause();
+      state.drawing = {
+        id: guid(),
+        type: 'path',
+        time: video.currentTime,
+        color: state.currentUser?.color || (colorInput ? colorInput.value : '#5b9cff'),
+        width: widthInput ? (parseInt(widthInput.value,10)||3) : 3,
+        points: [pt],
+        text: '',
+        createdAt: Date.now(),
+        viewerId: state.currentUser?.viewerId,
+        displayName: state.currentUser?.displayName
+      };
       drawOverlay();
-    };
-    const onUp = ()=>{
-      overlay.removeEventListener('mousemove', onMove);
-      overlay.removeEventListener('mouseup', onUp);
-      // Ensure there is a pin at this time; link drawing to it
-      const eps = 0.05; // 50ms
-      let pin = state.annotations.find(x=>x.type==='pin' && Math.abs(x.time - state.drawing.time) <= eps);
-      if (!pin){
-        const first = state.drawing.points?.[0] || {x:0.5,y:0.5};
-        pin = { id: guid(), type:'pin', x:first.x, y:first.y, time: state.drawing.time, text:'', color: state.drawing.color || '#5b9cff', createdAt: Date.now() };
-        state.annotations.push(pin);
-      }
-      state.drawing.parentId = pin.id;
-      state.annotations.push(state.drawing);
-      state.drawing = null;
-      renderList();
-      drawOverlay();
-      if (wasPlaying) video.play().catch(()=>{});
-    };
-    overlay.addEventListener('mousemove', onMove);
-    overlay.addEventListener('mouseup', onUp, { once:true });
+      const onMove = (e)=>{
+        const p = normCoords(e);
+        state.drawing.points.push(p);
+        drawOverlay();
+      };
+      const onUp = ()=>{
+        overlay.removeEventListener('mousemove', onMove);
+        overlay.removeEventListener('mouseup', onUp);
+        // Ensure there is a pin at this time; link drawing to it
+        const eps = 0.05; // 50ms
+        let pin = state.annotations.find(x=>x.type==='pin' && Math.abs(x.time - state.drawing.time) <= eps);
+        if (!pin){
+          const first = state.drawing.points?.[0] || {x:0.5,y:0.5};
+          pin = {
+            id: guid(),
+            type:'pin',
+            x:first.x,
+            y:first.y,
+            time: state.drawing.time,
+            text:'',
+            color: state.drawing.color || '#5b9cff',
+            createdAt: Date.now(),
+            viewerId: state.currentUser?.viewerId,
+            displayName: state.currentUser?.displayName
+          };
+          state.annotations.push(pin);
+        }
+        state.drawing.parentId = pin.id;
+        state.annotations.push(state.drawing);
+        markUnsavedChanges();
+        state.drawing = null;
+        renderList();
+        drawOverlay();
+        if (wasPlaying) video.play().catch(()=>{});
+      };
+      overlay.addEventListener('mousemove', onMove);
+      overlay.addEventListener('mouseup', onUp, { once:true });
+    });
   });
 
   // Temporary Draw: hold D to draw then release to return to Select
@@ -905,8 +1226,8 @@
 
   // Notes binding
   if (projectNotesEl){
-    projectNotesEl.addEventListener('input', ()=>{ state.notes = projectNotesEl.value; });
-    projectNotesEl.addEventListener('blur', ()=>{ state.notes = projectNotesEl.value.trim(); });
+    projectNotesEl.addEventListener('input', ()=>{ state.notes = projectNotesEl.value; markUnsavedChanges(); });
+    projectNotesEl.addEventListener('blur', ()=>{ state.notes = projectNotesEl.value.trim(); markUnsavedChanges(); });
   }
 
   // Timeline interactions
@@ -1028,10 +1349,22 @@
 
   saveJsonBtn.addEventListener('click', ()=>{
     const data = {
-      version: 3,
+      version: 4,
+      appVersion: state.appVersion,
       margin: parseFloat(marginInput.value)||0,
       annotations: state.annotations,
       notes: state.notes || '',
+      userMapping: state.userMapping || {},
+      currentUser: state.currentUser || null,
+      createdAt: state.createdAt || Date.now(),
+      exportTimestamp: Date.now(),
+      videoMetadata: state.videoMeta ? {
+        filename: state.videoMeta.name,
+        duration: state.videoMeta.duration || video.duration,
+        type: state.videoMeta.type,
+        size: state.videoMeta.size,
+        lastModified: state.videoMeta.lastModified
+      } : null
     };
     const blob = new Blob([JSON.stringify(data,null,2)], { type: 'application/json' });
     const a = document.createElement('a');
@@ -1040,6 +1373,7 @@
     document.body.appendChild(a);
     a.click();
     a.remove();
+    state.hasUnsavedChanges = false;
   });
 
   // Filters UI
@@ -1080,8 +1414,18 @@
         state.annotations = data.annotations;
         if (typeof data.margin === 'number') marginInput.value = String(data.margin);
         if (typeof data.notes === 'string'){ state.notes = data.notes; if (projectNotesEl) projectNotesEl.value = state.notes; }
+        // Load new metadata fields
+        if (data.userMapping) state.userMapping = data.userMapping;
+        if (data.createdAt) state.createdAt = data.createdAt;
+
+        // Check for unassigned comments
+        const unassigned = state.annotations.filter(a => !a.displayName);
+        if (unassigned.length > 0) {
+          showReassignmentDialog(unassigned);
+        }
       }
       renderList(); drawOverlay(); drawTimeline();
+      state.hasUnsavedChanges = false;
     }catch(err){ alert('Failed to load annotations: '+ err.message); }
   });
 
@@ -1089,11 +1433,16 @@
   if (saveProjectBtn){
     saveProjectBtn.addEventListener('click', ()=>{
       const data = {
-        version: 3,
+        version: 4, // Increment version for new metadata
+        appVersion: state.appVersion,
         notes: state.notes || '',
         margin: parseFloat(marginInput.value)||0,
         annotations: state.annotations,
         video: state.videoMeta || null,
+        userMapping: state.userMapping || {},
+        currentUser: state.currentUser || null,
+        createdAt: state.createdAt || Date.now(),
+        exportTimestamp: Date.now(),
       };
       const blob = new Blob([JSON.stringify(data,null,2)], { type: 'application/json' });
       const a = document.createElement('a');
@@ -1101,6 +1450,7 @@
       a.download = (state.videoMeta?.name ? state.videoMeta.name.replace(/\.[^.]+$/, '') + '-' : '') + 'project.vfa.json';
       document.body.appendChild(a);
       a.click(); a.remove();
+      state.hasUnsavedChanges = false;
     });
   }
 
@@ -1115,7 +1465,16 @@
         state.notes = data.notes || '';
         if (projectNotesEl) projectNotesEl.value = state.notes;
         state.videoMeta = data.video || null;
+        state.userMapping = data.userMapping || {};
+        state.createdAt = data.createdAt || Date.now();
         state.selectedIds.clear();
+
+        // Check for unassigned comments (without displayName)
+        const unassigned = state.annotations.filter(a => !a.displayName);
+        if (unassigned.length > 0) {
+          showReassignmentDialog(unassigned);
+        }
+
         renderList(); drawOverlay(); drawTimeline();
         if (!video.src){
           showPlaceholder();
@@ -1127,14 +1486,24 @@
         }
         requestAnimationFrame(()=>{ resizeOverlay(); });
         setMode('select');
+        state.hasUnsavedChanges = false;
       }catch(err){ alert('Failed to load project: ' + err.message); }
     });
   }
 
   clearAllBtn.addEventListener('click', ()=>{
     if (state.annotations.length===0) return;
+    if (state.hasUnsavedChanges) {
+      const choice = confirm('You have unsaved changes. Do you want to save before clearing?\n\nClick OK to save first, or Cancel to clear without saving.');
+      if (choice) {
+        // Trigger save project
+        saveProjectBtn?.click();
+        return;
+      }
+    }
     if (confirm('Delete all annotations?')){
       state.annotations = [];
+      state.hasUnsavedChanges = false;
       renderList(); drawOverlay();
     }
   });
@@ -1382,7 +1751,17 @@
     });
   }
 
+  // Unsaved changes guard
+  window.addEventListener('beforeunload', (e) => {
+    if (state.hasUnsavedChanges && state.annotations.length > 0) {
+      e.preventDefault();
+      e.returnValue = 'You have unsaved changes. Are you sure you want to leave?';
+      return e.returnValue;
+    }
+  });
+
   // Initial
+  initializeCurrentUser();
   setMode('select');
   if (widthInput && widthVal) widthVal.textContent = (widthInput.value||'3') + 'px';
   renderList();
