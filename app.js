@@ -38,7 +38,7 @@
   const timecodeEl = document.getElementById('timecode');
   const durationEl = document.getElementById('duration');
   const timelineCanvas = document.getElementById('timeline');
-  const timelineContainer = document.getElementById('timelineContainer');
+  const timelineContainer = timelineCanvas?.parentElement;
   const tl = timelineCanvas?.getContext('2d');
   const zoomInput = document.getElementById('zoomInput');
   const setInBtn = document.getElementById('setIn');
