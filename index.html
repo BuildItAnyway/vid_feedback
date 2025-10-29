@@ -112,30 +112,6 @@
         </div>
       </div>
 
-      <!-- Audio Analysis -->
-      <div class="sidebar-section">
-        <label class="checkbox-inline">
-          <input type="checkbox" id="anEnable" />
-          <span class="section-title">Audio Analysis</span>
-        </label>
-        <div class="audio-meters">
-          <div class="meter-row">
-            <span class="meter-label">Short:</span>
-            <span id="anShort" class="meter-value">—</span>
-            <span class="meter-unit">LUFS</span>
-          </div>
-          <div class="meter-row">
-            <span class="meter-label">Integrated:</span>
-            <span id="anIntegrated" class="meter-value">—</span>
-            <span class="meter-unit">LUFS</span>
-          </div>
-          <div class="meter-row">
-            <span class="meter-label">Peak:</span>
-            <span id="anPeak" class="meter-value">—</span>
-            <span class="meter-unit">dBFS</span>
-          </div>
-        </div>
-      </div>
     </aside>
 
     <!-- Center: Video Player -->
@@ -191,6 +167,16 @@
       <!-- Timeline -->
       <div class="timeline-wrapper">
         <canvas id="timeline" class="timeline-canvas"></canvas>
+      </div>
+
+      <!-- Audio Waveforms -->
+      <div class="waveform-wrapper">
+        <div class="waveform-label">L</div>
+        <canvas id="waveformLeft" class="waveform-canvas"></canvas>
+      </div>
+      <div class="waveform-wrapper">
+        <div class="waveform-label">R</div>
+        <canvas id="waveformRight" class="waveform-canvas"></canvas>
       </div>
     </main>
 
